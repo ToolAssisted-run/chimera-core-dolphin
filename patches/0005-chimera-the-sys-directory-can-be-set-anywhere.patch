@@ -1,0 +1,78 @@
+diff --git a/Source/Core/Common/FileUtil.cpp b/Source/Core/Common/FileUtil.cpp
+index 053614f31f..0230fe1c4a 100644
+--- a/Source/Core/Common/FileUtil.cpp
++++ b/Source/Core/Common/FileUtil.cpp
+@@ -18,9 +18,7 @@
+ #include "Common/CommonFuncs.h"
+ #include "Common/CommonPaths.h"
+ #include "Common/CommonTypes.h"
+-#ifdef ANDROID
+ #include "Common/Assert.h"
+-#endif
+ #ifdef __APPLE__
+ #include "Common/DynamicLibrary.h"
+ #endif
+@@ -62,8 +60,8 @@ namespace fs = std::filesystem;
+ 
+ namespace File
+ {
++static std::string s_sys_directory_override;
+ #ifdef ANDROID
+-static std::string s_android_sys_directory;
+ static std::string s_android_driver_directory;
+ static std::string s_android_lib_directory;
+ #endif
+@@ -771,11 +769,13 @@ static std::string CreateSysDirectoryPath()
+ #if defined(__APPLE__)
+   sys_directory = GetBundleDirectory() + DIR_SEP SYSDATA_DIR DIR_SEP;
+ #elif defined ANDROID
+-  sys_directory = s_android_sys_directory + DIR_SEP;
+-  ASSERT_MSG(COMMON, !s_android_sys_directory.empty(), "Sys directory has not been set");
++  sys_directory = s_sys_directory_override + DIR_SEP;
++  ASSERT_MSG(COMMON, !s_sys_directory_override.empty(), "Sys directory has not been set");
+ #else
+   const std::string local_sys_directory = GetExeDirectory() + DIR_SEP SYS_FOLDER_NAME DIR_SEP;
+-  if (IsDirectory(local_sys_directory))
++  if (!s_sys_directory_override.empty())
++    sys_directory = s_sys_directory_override + DIR_SEP;
++  else if (IsDirectory(local_sys_directory))
+     sys_directory = local_sys_directory;
+   else
+     sys_directory = SYSDATA_DIR DIR_SEP;
+@@ -792,15 +792,16 @@ const std::string& GetSysDirectory()
+   return sys_directory;
+ }
+ 
+-#ifdef ANDROID
+ void SetSysDirectory(const std::string& path)
+ {
+   INFO_LOG_FMT(COMMON, "Setting Sys directory to {}", path);
+-  ASSERT_MSG(COMMON, s_android_sys_directory.empty(), "Sys directory already set to {}",
+-             s_android_sys_directory);
+-  s_android_sys_directory = path;
++  ASSERT_MSG(COMMON, s_sys_directory_override.empty(), "Sys directory already set to {}",
++             s_sys_directory_override);
++  s_sys_directory_override = path;
+ }
+ 
++#ifdef ANDROID
++
+ void SetGpuDriverDirectories(const std::string& path, const std::string& lib_path)
+ {
+   INFO_LOG_FMT(COMMON, "Setting Driver directory to {} and library path to {}", path, lib_path);
+diff --git a/Source/Core/Common/FileUtil.h b/Source/Core/Common/FileUtil.h
+index d5c8285305..938ac07fd1 100644
+--- a/Source/Core/Common/FileUtil.h
++++ b/Source/Core/Common/FileUtil.h
+@@ -236,8 +236,10 @@ std::string GetThemeDir(const std::string& theme_name);
+ // Returns the path to where the sys file are
+ const std::string& GetSysDirectory();
+ 
+-#ifdef ANDROID
++// May be called (once, before first use) on any platform; without it the
++// per-platform default stands.
+ void SetSysDirectory(const std::string& path);
++#ifdef ANDROID
+ void SetGpuDriverDirectories(const std::string& path, const std::string& lib_path);
+ const std::string GetGpuDriverDirectory(unsigned int dir_index);
+ #endif

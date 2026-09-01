@@ -1,0 +1,54 @@
+diff --git a/Source/Core/VideoBackends/Software/SWGfx.cpp b/Source/Core/VideoBackends/Software/SWGfx.cpp
+index 7004c50864..5c83f5aa22 100644
+--- a/Source/Core/VideoBackends/Software/SWGfx.cpp
++++ b/Source/Core/VideoBackends/Software/SWGfx.cpp
+@@ -26,7 +26,7 @@ SWGfx::~SWGfx() = default;
+ 
+ bool SWGfx::IsHeadless() const
+ {
+-  return m_window->IsHeadless();
++  return !m_window || m_window->IsHeadless();
+ }
+ 
+ bool SWGfx::SupportsUtilityDrawing() const
+@@ -58,7 +58,7 @@ SWGfx::CreateFramebuffer(AbstractTexture* color_attachment, AbstractTexture* dep
+ bool SWGfx::BindBackbuffer(const ClearColor& clear_color)
+ {
+   // Look for framebuffer resizes
+-  if (!g_presenter->SurfaceResizedTestAndClear())
++  if (!m_window || !g_presenter->SurfaceResizedTestAndClear())
+     return true;
+ 
+   GLContext* context = m_window->GetContext();
+@@ -137,6 +137,8 @@ void SWGfx::SetScissorRect(const MathUtil::Rectangle<int>& rc)
+ 
+ SurfaceInfo SWGfx::GetSurfaceInfo() const
+ {
++  if (!m_window)
++    return {640, 528, 1.0f, AbstractTextureFormat::RGBA8};
+   GLContext* context = m_window->GetContext();
+   return {std::max(context->GetBackBufferWidth(), 1u), std::max(context->GetBackBufferHeight(), 1u),
+           1.0f, AbstractTextureFormat::RGBA8};
+diff --git a/Source/Core/VideoBackends/Software/SWmain.cpp b/Source/Core/VideoBackends/Software/SWmain.cpp
+index 66c96f5a16..126343c23d 100644
+--- a/Source/Core/VideoBackends/Software/SWmain.cpp
++++ b/Source/Core/VideoBackends/Software/SWmain.cpp
+@@ -91,9 +91,15 @@ void VideoSoftware::InitBackendInfo(const WindowSystemInfo& wsi)
+ 
+ bool VideoSoftware::Initialize(const WindowSystemInfo& wsi)
+ {
+-  std::unique_ptr<SWOGLWindow> window = SWOGLWindow::Create(wsi);
+-  if (!window)
+-    return false;
++  // A headless machine rasterizes without presenting; no GL context exists
++  // or is needed. Every m_window use in SWGfx honours the null.
++  std::unique_ptr<SWOGLWindow> window;
++  if (wsi.type != WindowSystemType::Headless)
++  {
++    window = SWOGLWindow::Create(wsi);
++    if (!window)
++      return false;
++  }
+ 
+   Clipper::Init();
+   Rasterizer::Init();

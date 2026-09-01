@@ -3,3 +3,7 @@ minibox-diag.log
 tests/roms-local/
 tests/firmware-local/
 waterbox/tests/work/
+waterbox/obj-native/
+waterbox/obj-guest/
+waterbox/work/
+build-*.log
