@@ -1,0 +1,3 @@
+[submodule "extern/dolphin"]
+	path = extern/dolphin
+	url = https://github.com/dolphin-emu/dolphin

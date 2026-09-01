@@ -1,0 +1,5 @@
+build/
+minibox-diag.log
+tests/roms-local/
+tests/firmware-local/
+waterbox/tests/work/
