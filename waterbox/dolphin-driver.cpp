@@ -333,8 +333,11 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
     const bool wants_wii = strcmp(s_machine, "wii") == 0;
     if (wants_wii != Sys().IsWii())
     {
-      s_error = wants_wii ? "the project says Wii, but this image boots a GameCube"
-                          : "the project says GameCube, but this image boots a Wii";
+      s_error = wants_wii
+                    ? "the project says Wii, but this image boots a GameCube - pick "
+                      "GameCube in the New Project wizard's System box"
+                    : "the project says GameCube, but this image boots a Wii - pick "
+                      "Wii in the New Project wizard's System box";
       return 0;
     }
   }
