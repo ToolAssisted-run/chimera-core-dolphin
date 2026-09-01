@@ -114,14 +114,23 @@ fi
 # disc decrypted with dolphin's own keys. The rerecord leg doubles as proof
 # the RAM NAND is machine state an arena snapshot captures.
 if [ -f "$wiidisc" ]; then
-	nat w1 --frames 60 --report 1 "$wiidisc" > "$work/w1.txt"
-	wbx --frames 60 --report 1 "$wiidisc" > "$work/wg.txt"
+	nat w1 --frames 60 --report 1 --machine wii "$wiidisc" > "$work/w1.txt"
+	wbx --frames 60 --report 1 --settings '{"machine":"wii"}' "$wiidisc" > "$work/wg.txt"
 	if cmp -s "$work/w1.txt" "$work/wg.txt"; then PASS "wii disc leg - native == sandbox at 60 frames"
 	else FAIL "wii disc leg"; fi
-	wbx --frames 30 --report 1 --rerecord "$wiidisc" > "$work/wrr.txt"
-	wbx --frames 30 --report 1 "$wiidisc" > "$work/wpl.txt"
+	wbx --frames 30 --report 1 --rerecord --settings '{"machine":"wii"}' "$wiidisc" > "$work/wrr.txt"
+	wbx --frames 30 --report 1 --settings '{"machine":"wii"}' "$wiidisc" > "$work/wpl.txt"
 	if [ -s "$work/wpl.txt" ] && cmp -s "$work/wrr.txt" "$work/wpl.txt"; then PASS "wii rerecord leg - the RAM NAND survives arena restores"
 	else FAIL "wii rerecord leg"; fi
+	# the declared machine is a gate, not a guess: a Wii image in a project
+	# that says GameCube is a refusal, in both flavors
+	if nat wm --frames 1 --machine gamecube "$wiidisc" > "$work/wm.txt" 2>/dev/null && [ -s "$work/wm.txt" ]; then
+		FAIL "machine leg - native booted a Wii image as a GameCube"
+	elif wbx --frames 1 --settings '{"machine":"gamecube"}' "$wiidisc" > "$work/wmg.txt" 2>/dev/null && [ -s "$work/wmg.txt" ]; then
+		FAIL "machine leg - the sandbox booted a Wii image as a GameCube"
+	else
+		PASS "machine leg - a Wii image in a GameCube project is a load error"
+	fi
 else
 	SKIP "wii legs (no Wii disc in tests/roms-local) - would prove IOS HLE + the in-memory NAND across flavors"
 fi

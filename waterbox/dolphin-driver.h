@@ -21,6 +21,7 @@ const uint32_t* chimera_dolphin_video(int* w, int* h);
 const int16_t* chimera_dolphin_audio(int* frames);
 int chimera_dolphin_vsync_numerator(void);
 int chimera_dolphin_vsync_denominator(void);
+void chimera_dolphin_set_machine(const char* name);
 void chimera_dolphin_set_memcard_a(int present);
 void chimera_dolphin_set_cpu_core(const char* name);
 void chimera_dolphin_set_port(int port, int present);

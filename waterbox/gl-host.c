@@ -263,7 +263,9 @@ int chimera_gl_host_init(char *err, int errlen)
 	 * the thread that will actually call GL (the emulator's own) claims it
 	 * lazily in the dispatcher. Holding it here would make that bind fail
 	 * silently and every call a no-op. */
+#ifndef _WIN32
 	eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+#endif
 
 	return 0;
 }

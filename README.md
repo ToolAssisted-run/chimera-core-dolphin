@@ -1,10 +1,11 @@
 # chimera-core-dolphin
 
-The Nintendo GameCube (and, later, Wii) as a
+The Nintendo GameCube and Wii as a
 [Chimera](https://github.com/ToolAssisted-run/chimera) waterbox core, built from
 [Dolphin](https://dolphin-emu.org). The machine runs deterministically inside
 the miniBox sandbox: byte-for-byte reproducible boots, savestates that are
-arena snapshots, PowerPC interpreter and software renderer first.
+arena snapshots, JIT and interpreter as citable machines, software and
+bridged-OpenGL renderers, and the Wii's NAND held in guest memory.
 
 - `extern/dolphin` - upstream, pinned, unmodified
 - `patches/` - the local patch series (numbered, applied by `apply-patches.sh`;

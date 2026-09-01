@@ -69,6 +69,9 @@ ECL_EXPORT int Init(void)
     }
   }
 
+  char machine[16] = "";
+  wbx_setting_str("machine", machine, sizeof machine);
+  chimera_dolphin_set_machine(machine);
   chimera_dolphin_set_memcard_a(wbx_setting_bool("memcard_a", 1));
   char cpuCore[32] = "jit";
   wbx_setting_str("cpu_core", cpuCore, sizeof cpuCore);

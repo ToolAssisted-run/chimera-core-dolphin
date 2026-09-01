@@ -23,7 +23,11 @@
       "formats": [
         "raw"
       ],
-      "help": "What the machine starts with already saved: the raw memory card image Emulator > Export Save Data... writes, put back under the same name (MemoryCardA.USA.raw, .EUR., or .JAP. following the game's region) so a run can continue from where another left off. It is mounted read-only and pinned by hash, and the movie cites it. Leave it empty and the machine formats a blank card at boot, which is a new console."
+      "help": "What the machine starts with already saved: the raw memory card image Emulator > Export Save Data... writes, put back under the same name (MemoryCardA.USA.raw, .EUR., or .JAP. following the game's region) so a run can continue from where another left off. It is mounted read-only and pinned by hash, and the movie cites it. Leave it empty and the machine formats a blank card at boot, which is a new console.",
+      "exposedWhen": {
+        "setting": "machine",
+        "is": "gamecube"
+      }
     }
   ]
 }

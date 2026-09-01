@@ -54,6 +54,8 @@ struct PadWire
 static PadWire s_pad[4];
 static bool s_input_read;
 static bool s_memcard_a = true;
+// which console the project declares ("gamecube"/"wii"); empty = don't check
+static char s_machine[16];
 static PowerPC::CPUCore s_cpu_core = PowerPC::CPUCore::JIT64;
 static bool s_renderer_opengl;
 static bool s_port_present[4] = {true, false, false, false};
@@ -323,6 +325,18 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
     s_error = "the machine tore down during boot (see log)";
     return 0;
   }
+  // The project declares which machine it is; the image does not get a vote.
+  // A mismatch is a load error, not a silent boot of the other console.
+  if (s_machine[0])
+  {
+    const bool wants_wii = strcmp(s_machine, "wii") == 0;
+    if (wants_wii != Sys().IsWii())
+    {
+      s_error = wants_wii ? "the project says Wii, but this image boots a GameCube"
+                          : "the project says GameCube, but this image boots a Wii";
+      return 0;
+    }
+  }
   fprintf(stderr, "[driver] video backend: %s\n",
           g_video_backend ? g_video_backend->GetConfigName().c_str() : "(none)");
   // NullSound zeroes the mixer's output rate so nothing consumes samples;
@@ -512,6 +526,11 @@ const char* chimera_dolphin_domain_name(int i)
     return "L1 Cache";
   }
   return nullptr;
+}
+
+void chimera_dolphin_set_machine(const char* name)
+{
+  snprintf(s_machine, sizeof s_machine, "%s", name ? name : "");
 }
 
 void chimera_dolphin_set_memcard_a(int present)
