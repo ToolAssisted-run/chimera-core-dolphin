@@ -120,7 +120,10 @@ reference_ram() {
 settings_config() { python3 "$here/settings-config.py" "$config" "$1" "$2" "{}"; }
 
 # --- 1. swiss through the frontend: RAM == the sandbox reference ------------
-settings_config "$work/config.base.ini" '{}'
+# renderer pinned to software: these legs prove the frontend's plumbing against
+# the software sandbox reference; the default renderer is the GPU, whose RAM
+# effects are the gpu tooling's business, not this comparison's
+settings_config "$work/config.base.ini" '{"renderer": "software"}'
 if ! reference_ram "base" "$swiss"; then
 	report "game:frontend" FAIL "reference runner error (see tests/work/ref.base.log)"
 elif ! run_frontend "base" "$work/config.base.ini" "$frames" "$work/base.png" "$swiss"; then
@@ -153,7 +156,7 @@ fi
 # memory must (a) match a reference run with the same setting and (b) differ
 # from the with-card machine - otherwise the knob turned nothing.
 if [ -f "$disc" ]; then
-	settings_config "$work/config.nocard.ini" '{"memcard_a": false}'
+	settings_config "$work/config.nocard.ini" '{"memcard_a": false, "renderer": "software"}'
 	if ! reference_ram "nocard" "$disc" '{"memcard_a":false}'; then
 		report "settings:memcard" FAIL "reference runner error (see tests/work/ref.nocard.log)"
 	elif cmp -s "$work/ref.nocard.ram.bin" "$work/ref.disc.ram.bin"; then
