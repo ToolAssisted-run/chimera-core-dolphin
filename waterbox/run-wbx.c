@@ -34,6 +34,19 @@ static intptr_t mem_reader(uintptr_t ud, uint8_t *d, uintptr_t s)
 	size_t take = s < (m->n - m->pos) ? s : (m->n - m->pos);
 	memcpy(d, m->p + m->pos, take); m->pos += take; return (intptr_t)take;
 }
+typedef struct { uint8_t *b; size_t len, cap, pos; } membuf;
+static int32_t mem_write(uintptr_t ud, const uint8_t *d, uintptr_t n)
+{
+	membuf *m = (membuf *)ud;
+	if (m->len + n > m->cap) { m->cap = (m->len + n) * 2 + 64; m->b = realloc(m->b, m->cap); }
+	memcpy(m->b + m->len, d, n); m->len += n; return 0;
+}
+static intptr_t mem_read(uintptr_t ud, uint8_t *d, uintptr_t n)
+{
+	membuf *m = (membuf *)ud;
+	uintptr_t avail = m->len - m->pos; if (n > avail) n = avail;
+	memcpy(d, m->b + m->pos, n); m->pos += n; return (intptr_t)n;
+}
 
 typedef int (MB_GUEST_ABI *intfn)(void);
 typedef void (MB_GUEST_ABI *framefn)(uint64_t);
@@ -89,11 +102,14 @@ int main(int argc, char **argv)
 {
 	const char *core = NULL, *game = NULL, *sysdir = NULL, *ramOut = NULL;
 	long frames = 60, report = 10;
+	int rewind = 0, rerecord = 0;
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = atol(argv[++i]);
 		else if (!strcmp(argv[i], "--report") && i + 1 < argc) report = atol(argv[++i]);
 		else if (!strcmp(argv[i], "--sys") && i + 1 < argc) sysdir = argv[++i];
 		else if (!strcmp(argv[i], "--ram-out") && i + 1 < argc) ramOut = argv[++i];
+		else if (!strcmp(argv[i], "--rewind")) rewind = 1;
+		else if (!strcmp(argv[i], "--rerecord")) rerecord = 1;
 		else if (!core) core = argv[i];
 		else game = argv[i];
 	}
@@ -141,12 +157,49 @@ int main(int argc, char **argv)
 	ptrfn_i GetMemoryDomainPtr = (ptrfn_i)proc(h, "GetMemoryDomainPtr");
 	i64fn_i GetMemoryDomainSize = (i64fn_i)proc(h, "GetMemoryDomainSize");
 
+	/* seal: the post-boot machine is the savestate baseline */
+	wbx_deactivate_host(h, &r);
+	wbx_seal(h, &r);
+	if (r.error_message[0]) { fprintf(stderr, "seal: %s\n", r.error_message); return 1; }
+	wbx_activate_host(h, &r);
+
 	const uint8_t *ram = (const uint8_t *)GetMemoryDomainPtr(0);
 	int64_t ramSize = GetMemoryDomainSize(0);
 	printf("booted paused; ram %lld bytes\n", (long long)ramSize);
 	fflush(stdout);
 
+	if (rewind) {
+		/* the TAS shape: run half, save, finish recording digests, load the
+		 * mid-state and finish again - the two second halves must agree */
+		long half = frames / 2;
+		for (long f = 1; f <= half; f++) FrameAdvance(0);
+		membuf st = {0};
+		wbx_save_state(h, mem_write, (uintptr_t)&st, &r);
+		if (r.error_message[0]) { fprintf(stderr, "save: %s\n", r.error_message); return 1; }
+		uint64_t pass1 = 0, pass2 = 0;
+		for (long f = half + 1; f <= frames; f++) { FrameAdvance(0); pass1 = fnv(pass1, ram, (size_t)ramSize); }
+		st.pos = 0;
+		wbx_load_state(h, mem_read, (uintptr_t)&st, &r);
+		if (r.error_message[0]) { fprintf(stderr, "load: %s\n", r.error_message); return 1; }
+		for (long f = half + 1; f <= frames; f++) { FrameAdvance(0); pass2 = fnv(pass2, ram, (size_t)ramSize); }
+		printf("rewind: pass1 %016llx pass2 %016llx -> %s\n", (unsigned long long)pass1,
+		       (unsigned long long)pass2, pass1 == pass2 ? "EQUAL" : "DIFFERENT");
+		free(st.b);
+		wbx_deactivate_host(h, &r); wbx_destroy_host(h, &r);
+		return pass1 == pass2 ? 0 : 1;
+	}
+
 	for (long f = 1; f <= frames; f++) {
+		if (rerecord) {
+			/* save+load around every frame; the digests must match a plain run */
+			membuf st = {0};
+			wbx_save_state(h, mem_write, (uintptr_t)&st, &r);
+			if (r.error_message[0]) { fprintf(stderr, "save@%ld: %s\n", f, r.error_message); return 1; }
+			st.pos = 0;
+			wbx_load_state(h, mem_read, (uintptr_t)&st, &r);
+			if (r.error_message[0]) { fprintf(stderr, "load@%ld: %s\n", f, r.error_message); return 1; }
+			free(st.b);
+		}
 		FrameAdvance(0);
 		if (f % report == 0 || f == frames) {
 			printf("frame %5ld ram %016llx\n", f, (unsigned long long)fnv(0, ram, (size_t)ramSize));
