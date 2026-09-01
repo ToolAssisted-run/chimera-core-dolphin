@@ -29,6 +29,7 @@ int main(int argc, char** argv)
   const char* sys = nullptr;
   long frames = 60;
   long report = 10;
+  const char* ram_out = nullptr;
   for (int i = 1; i < argc; i++)
   {
     if (!strcmp(argv[i], "--frames") && i + 1 < argc)
@@ -39,6 +40,8 @@ int main(int argc, char** argv)
       user = argv[++i];
     else if (!strcmp(argv[i], "--sys") && i + 1 < argc)
       sys = argv[++i];
+    else if (!strcmp(argv[i], "--ram-out") && i + 1 < argc)
+      ram_out = argv[++i];
     else
       game = argv[i];
   }
@@ -65,6 +68,12 @@ int main(int argc, char** argv)
              fnv(chimera_dolphin_ram_ptr(), chimera_dolphin_ram_size()));
       fflush(stdout);
     }
+  }
+  if (ram_out)
+  {
+    FILE* f = fopen(ram_out, "wb");
+    fwrite(chimera_dolphin_ram_ptr(), 1, chimera_dolphin_ram_size(), f);
+    fclose(f);
   }
   chimera_dolphin_shutdown();
   printf("done\n");

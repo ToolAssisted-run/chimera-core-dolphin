@@ -54,6 +54,9 @@ public:
     layer->Set(Config::MAIN_AUDIO_BACKEND, std::string(BACKEND_NULLSOUND));
     layer->Set(Config::MAIN_EMULATION_SPEED, 0.0f);
     layer->Set(Config::MAIN_WIIMOTE_CONTINUOUS_SCANNING, false);
+    // the machine's clock belongs to the machine: a fixed epoch, never the host
+    layer->Set(Config::MAIN_CUSTOM_RTC_ENABLE, true);
+    layer->Set(Config::MAIN_CUSTOM_RTC_VALUE, u32(946684800));
     layer->Set(Common::Log::LOGGER_VERBOSITY, Common::Log::LogLevel::LINFO);
   }
   void Save(Config::Layer*) override {}
@@ -150,6 +153,7 @@ void chimera_dolphin_shutdown(void)
 {
   Core::Stop(Sys());
   WaitForState(Core::State::Uninitialized);
+  Core::Shutdown(Sys());
   UICommon::ShutdownControllers();
   UICommon::Shutdown();
 }
