@@ -1,0 +1,66 @@
+{
+	"_comment": [
+		"Default bindings for the GameCube Controller this package declares. The frontend",
+		"ships no bindings of its own - a package that declares a controller says how it is",
+		"played by default, and the user's own bindings always win.",
+		"",
+		"The face buttons follow the pad's own geometry: A is the big center button and takes",
+		"the key under the hand, B sits below-left of it, X to the right, Y on top. Z is the",
+		"purple shoulder tab above R. The keyboard arrows drive the MAIN STICK, because that",
+		"is how a GameCube game is steered; the d-pad, a secondary control on this pad, takes",
+		"IJKL. Triggers are the analog travel; L and R the clicks at the bottom of it."
+	],
+	"AllTrollers": {
+		"GameCube Controller": {
+			"A": "Z, J1 B2, X1 A",
+			"B": "A, J1 B1, X1 X",
+			"X": "X, J1 B3, X1 B",
+			"Y": "S, J1 B4, X1 Y",
+			"Z": "D, J1 B6, X1 RightShoulder",
+			"Start": "Enter, J1 B10, X1 Start",
+			"Up": "I, J1 POV1U, X1 DpadUp",
+			"Down": "K, J1 POV1D, X1 DpadDown",
+			"Left": "J, J1 POV1L, X1 DpadLeft",
+			"Right": "L, J1 POV1R, X1 DpadRight",
+			"L": "Q, J1 B5, X1 LeftShoulder",
+			"R": "W, J1 B7, X1 RightStick"
+		}
+	},
+	"AllTrollersAutoFire": {
+		"GameCube Controller": {}
+	},
+	"AllTrollersAnalog": {
+		"GameCube Controller": {
+			"Main Stick X": {
+				"Value": "X1 LeftThumbX Axis",
+				"Mult": 1.0,
+				"Deadzone": 0.1
+			},
+			"Main Stick Y": {
+				"Value": "X1 LeftThumbY Axis",
+				"Mult": -1.0,
+				"Deadzone": 0.1
+			},
+			"C-Stick X": {
+				"Value": "X1 RightThumbX Axis",
+				"Mult": 1.0,
+				"Deadzone": 0.1
+			},
+			"C-Stick Y": {
+				"Value": "X1 RightThumbY Axis",
+				"Mult": -1.0,
+				"Deadzone": 0.1
+			},
+			"Trigger L": {
+				"Value": "X1 LeftTrigger Axis",
+				"Mult": 1.0,
+				"Deadzone": 0.0
+			},
+			"Trigger R": {
+				"Value": "X1 RightTrigger Axis",
+				"Mult": 1.0,
+				"Deadzone": 0.0
+			}
+		}
+	}
+}

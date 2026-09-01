@@ -1,0 +1,162 @@
+{
+  "package": "dolphin",
+  "effectiveTerms": "GPL-3.0-or-later",
+  "commercialUse": "allowed under the GPL",
+  "note": "The built core combines this repository's integration with Dolphin and is distributed under the GPL-3.0-or-later: Dolphin itself is GPL-2.0-or-later, and the linked mbedtls is Apache-2.0, which the GPL permits only at version 3 - so the 'or later' is exercised. Everything else is permissive and travels inside those terms: fmt, pugixml, minizip-ng, enet, imgui and implot are MIT-family; zlib-ng, SFML and FatFs are zlib/BSD-family; zstd, lz4, xxhash and libspng are BSD; liblzma is 0BSD; bzip2 is its own BSD-style licence; curl is the curl licence; LZO is GPL-2.0-or-later. The free GameCube DSP roms and IPL font renderers under Data/Sys are Dolphin's own work and ship with the package under Dolphin's terms. No game, no real IPL dump and no other copyrighted firmware is part of this package.",
+  "components": [
+    {
+      "name": "chimera-core-dolphin (integration)",
+      "license": "MIT, and Dolphin's terms for patches/",
+      "url": "https://github.com/ToolAssisted-run/chimera-core-dolphin",
+      "commit": "{selfCommit}",
+      "file": "LICENSE",
+      "sourceUrl": "https://github.com/ToolAssisted-run/chimera-core-dolphin/archive/{commit}.tar.gz"
+    },
+    {
+      "name": "Dolphin",
+      "license": "GPL-2.0-or-later",
+      "url": "https://github.com/dolphin-emu/dolphin",
+      "commit": "{submodule:extern/dolphin}",
+      "file": "extern/dolphin/COPYING",
+      "sourceUrl": "https://github.com/dolphin-emu/dolphin/archive/{commit}.tar.gz"
+    },
+    {
+      "name": "fmt",
+      "license": "MIT",
+      "url": "https://github.com/fmtlib/fmt",
+      "file": "extern/dolphin/Externals/fmt/fmt/LICENSE"
+    },
+    {
+      "name": "mbedtls",
+      "license": "Apache-2.0",
+      "url": "https://github.com/Mbed-TLS/mbedtls",
+      "file": "extern/dolphin/Externals/mbedtls/LICENSE"
+    },
+    {
+      "name": "zlib-ng",
+      "license": "Zlib",
+      "url": "https://github.com/zlib-ng/zlib-ng",
+      "file": "extern/dolphin/Externals/zlib-ng/zlib-ng/LICENSE.md"
+    },
+    {
+      "name": "zstd",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/facebook/zstd",
+      "file": "extern/dolphin/Externals/zstd/zstd/LICENSE"
+    },
+    {
+      "name": "lz4",
+      "license": "BSD-2-Clause",
+      "url": "https://github.com/lz4/lz4",
+      "file": "extern/dolphin/Externals/lz4/lz4/LICENSE"
+    },
+    {
+      "name": "LZO",
+      "license": "GPL-2.0-or-later",
+      "url": "https://www.oberhumer.com/opensource/lzo/",
+      "file": "extern/dolphin/Externals/LZO/COPYING"
+    },
+    {
+      "name": "bzip2",
+      "license": "bzip2-1.0.6",
+      "url": "https://sourceware.org/bzip2/",
+      "file": "extern/dolphin/Externals/bzip2/bzip2/LICENSE"
+    },
+    {
+      "name": "liblzma (xz)",
+      "license": "0BSD",
+      "url": "https://tukaani.org/xz/",
+      "file": "extern/dolphin/Externals/liblzma/COPYING"
+    },
+    {
+      "name": "minizip-ng",
+      "license": "Zlib",
+      "url": "https://github.com/zlib-ng/minizip-ng",
+      "file": "extern/dolphin/Externals/minizip-ng/minizip-ng/LICENSE"
+    },
+    {
+      "name": "pugixml",
+      "license": "MIT",
+      "url": "https://github.com/zeux/pugixml",
+      "file": "extern/dolphin/Externals/pugixml/pugixml/LICENSE.md"
+    },
+    {
+      "name": "libspng",
+      "license": "BSD-2-Clause",
+      "url": "https://github.com/randy408/libspng",
+      "file": "extern/dolphin/Externals/libspng/libspng/LICENSE"
+    },
+    {
+      "name": "xxHash",
+      "license": "BSD-2-Clause",
+      "url": "https://github.com/Cyan4973/xxHash",
+      "file": "extern/dolphin/Externals/xxhash/xxHash/LICENSE"
+    },
+    {
+      "name": "curl",
+      "license": "curl",
+      "url": "https://curl.se/",
+      "file": "extern/dolphin/Externals/curl/curl/LICENSES/curl.txt"
+    },
+    {
+      "name": "SFML (system, network)",
+      "license": "Zlib",
+      "url": "https://www.sfml-dev.org/",
+      "file": "extern/dolphin/Externals/SFML/license.txt"
+    },
+    {
+      "name": "enet",
+      "license": "MIT",
+      "url": "https://github.com/lsalzman/enet",
+      "file": "extern/dolphin/Externals/enet/enet/LICENSE"
+    },
+    {
+      "name": "FatFs",
+      "license": "FatFs (BSD-style)",
+      "url": "http://elm-chan.org/fsw/ff/",
+      "file": "extern/dolphin/Externals/FatFs/LICENSE.txt"
+    },
+    {
+      "name": "Dear ImGui",
+      "license": "MIT",
+      "url": "https://github.com/ocornut/imgui",
+      "file": "extern/dolphin/Externals/imgui/imgui/LICENSE.txt"
+    },
+    {
+      "name": "implot",
+      "license": "MIT",
+      "url": "https://github.com/epezent/implot",
+      "file": "extern/dolphin/Externals/implot/LICENSE"
+    },
+    {
+      "name": "libiconv",
+      "license": "LGPL-2.1-or-later",
+      "url": "https://www.gnu.org/software/libiconv/",
+      "licenseText": "GNU LGPL 2.1 or later; see https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html"
+    },
+    {
+      "name": "Bochs disassembler",
+      "license": "LGPL-2.1-or-later",
+      "url": "https://bochs.sourceforge.io/",
+      "licenseText": "GNU LGPL 2.1 or later; see https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html"
+    },
+    {
+      "name": "expr",
+      "license": "MIT",
+      "url": "https://github.com/zserge/expr",
+      "file": "extern/dolphin/Externals/expr/LICENSE"
+    },
+    {
+      "name": "picojson",
+      "license": "BSD-2-Clause",
+      "url": "https://github.com/kazuho/picojson",
+      "file": "extern/dolphin/Externals/picojson/LICENSE"
+    },
+    {
+      "name": "Swiss (gate test content only, not linked)",
+      "license": "GPL-2.0",
+      "url": "https://github.com/emukidid/swiss-gc",
+      "file": "tests/roms/README.md"
+    }
+  ]
+}

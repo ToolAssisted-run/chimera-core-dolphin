@@ -104,6 +104,7 @@ int main(int argc, char **argv)
 {
 	const char *core = NULL, *game = NULL, *sysdir = NULL, *ramOut = NULL, *savedataOut = NULL;
 	const char *saves[8]; int nsaves = 0;
+	const char *settingsJson = NULL;
 	long frames = 60, report = 10;
 	int rewind = 0, rerecord = 0;
 	struct { long first, count; int index; } press[32];
@@ -115,6 +116,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--ram-out") && i + 1 < argc) ramOut = argv[++i];
 		else if (!strcmp(argv[i], "--savedata-out") && i + 1 < argc) savedataOut = argv[++i];
 		else if (!strcmp(argv[i], "--save") && i + 1 < argc && nsaves < 8) saves[nsaves++] = argv[++i];
+		else if (!strcmp(argv[i], "--settings") && i + 1 < argc) settingsJson = argv[++i];
 		else if (!strcmp(argv[i], "--rewind")) rewind = 1;
 		else if (!strcmp(argv[i], "--rerecord")) rerecord = 1;
 		else if (!strcmp(argv[i], "--press") && i + 1 < argc && presses < 32) {
@@ -157,6 +159,13 @@ int main(int argc, char **argv)
 	if (r.error_message[0]) { fprintf(stderr, "mount rom.name: %s\n", r.error_message); return 1; }
 
 	if (mountTree(h, "/sys", sysdir) != 0) return 1;
+
+	/* the settings channel, exactly as the frontend mounts it */
+	if (settingsJson) {
+		memreader sr = { (const uint8_t *)settingsJson, strlen(settingsJson), 0 };
+		wbx_mount_file(h, "settings", mem_reader, (uintptr_t)&sr, false, &r);
+		if (r.error_message[0]) { fprintf(stderr, "mount settings: %s\n", r.error_message); return 1; }
+	}
 
 	/* prior saves, mounted at exactly the path the machine opens */
 	for (int i = 0; i < nsaves; i++) {

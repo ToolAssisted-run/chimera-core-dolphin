@@ -48,6 +48,7 @@ struct PadWire
 };
 static PadWire s_pad[4];
 static bool s_input_read;
+static bool s_memcard_a = true;
 
 static constexpr uint16_t kWireBit[12] = {
     PAD_BUTTON_A,    PAD_BUTTON_B,    PAD_BUTTON_X,    PAD_BUTTON_Y,
@@ -190,7 +191,8 @@ public:
     layer->Set(Config::MAIN_MEMCARD_A_PATH, std::string("savedata/MemoryCardA.raw"));
     layer->Set(Config::MAIN_MEMCARD_B_PATH, std::string("savedata/MemoryCardB.raw"));
     // raw cards, not GCI folders: one buffer is one save-data file
-    layer->Set(Config::MAIN_SLOT_A, ExpansionInterface::EXIDeviceType::MemoryCard);
+    layer->Set(Config::MAIN_SLOT_A, s_memcard_a ? ExpansionInterface::EXIDeviceType::MemoryCard :
+                                                  ExpansionInterface::EXIDeviceType::None);
     layer->Set(Config::MAIN_SLOT_B, ExpansionInterface::EXIDeviceType::None);
     layer->Set(Common::Log::LOGGER_VERBOSITY, Common::Log::LogLevel::LINFO);
   }
@@ -409,6 +411,11 @@ const char* chimera_dolphin_domain_name(int i)
     return "L1 Cache";
   }
   return nullptr;
+}
+
+void chimera_dolphin_set_memcard_a(int present)
+{
+  s_memcard_a = present != 0;
 }
 
 int chimera_dolphin_savedata_count(void)

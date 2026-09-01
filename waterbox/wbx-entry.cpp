@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include <emulibc.h>
+#include <waterbox_settings.h>
 #include <waterbox_slots.h>
 
 #include "dolphin-driver.h"
@@ -32,19 +33,39 @@ ECL_EXPORT int Init(void)
   // file itself under that canonical name); a rom opened directly arrives
   // as "rom" with its real name in "rom.name" so extension detection still
   // works. See file_slots.json once it exists.
-  char romName[256] = "rom";
+  char romName[256] = "game";
   if (!wbx_slot_first("game", romName, sizeof romName))
   {
+    // No slot map: a directly-opened rom sits under the fixed mount "game"
+    // with its true name in rom.name. Alias an extension-bearing path onto
+    // the mount so dolphin's type detection has something to read.
+    char realName[256] = "";
     FILE* f = fopen("rom.name", "rb");
     if (f)
     {
-      size_t n = fread(romName, 1, sizeof romName - 1, f);
-      while (n && (romName[n - 1] == '\n' || romName[n - 1] == '\r'))
+      size_t n = fread(realName, 1, sizeof realName - 1, f);
+      while (n && (realName[n - 1] == '\n' || realName[n - 1] == '\r'))
         n--;
-      romName[n] = '\0';
+      realName[n] = '\0';
       fclose(f);
     }
+    // The harness and the frontend both mount the file under its real
+    // basename (with a leading slash) alongside the fixed "game" mount;
+    // boot whichever answers, preferring the name that carries the
+    // extension dolphin's type detection wants.
+    char candidate[300];
+    snprintf(candidate, sizeof candidate, "%s%s", realName[0] == '/' ? "" : "/", realName);
+    FILE* probe = realName[0] ? fopen(candidate, "rb") : nullptr;
+    if (!probe && realName[0])
+      probe = fopen(realName, "rb"), snprintf(candidate, sizeof candidate, "%s", realName);
+    if (probe)
+    {
+      fclose(probe);
+      snprintf(romName, sizeof romName, "%s", candidate);
+    }
   }
+
+  chimera_dolphin_set_memcard_a(wbx_setting_bool("memcard_a", 1));
 
   if (!chimera_dolphin_init("/user", "/sys", romName))
   {
