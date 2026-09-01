@@ -75,6 +75,14 @@ for core in interpreter cached-interpreter; do
 	else FAIL "cpu core '$core' - rerecord leg"; fi
 done
 
+# ---- the ports are the machine: a second pad changes it, identically -------
+nat pp --ports 1100 --frames 60 --report 1 "$swiss" > "$work/pp-n.txt"
+wbx --settings '{"port2":"gc-controller"}' --frames 60 --report 1 "$swiss" > "$work/pp-g.txt"
+head -60 "$work/n1.txt" > "$work/n1-60.txt"
+if cmp -s "$work/pp-n.txt" "$work/pp-g.txt" && ! cmp -s "$work/pp-n.txt" "$work/n1-60.txt"; then
+	PASS "ports leg - a second controller is a different machine, equal across flavors"
+else FAIL "ports leg"; fi
+
 # ---- the GPU bridge: a real driver, the same bytes both flavors ------------
 # The GPU is outside the sandbox and different on every machine, so this leg
 # proves equality ON THIS DRIVER only - and SKIPs, not fails, where no GL

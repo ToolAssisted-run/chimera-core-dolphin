@@ -25,6 +25,7 @@
 #include "Core/HW/DSP.h"
 #include "Core/HW/EXI/EXI_Device.h"
 #include "Core/HW/Memmap.h"
+#include "Core/HW/SI/SI_Device.h"
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/System.h"
 #include "AudioCommon/AudioCommon.h"
@@ -55,6 +56,7 @@ static bool s_input_read;
 static bool s_memcard_a = true;
 static PowerPC::CPUCore s_cpu_core = PowerPC::CPUCore::JIT64;
 static bool s_renderer_opengl;
+static bool s_port_present[4] = {true, false, false, false};
 extern "C" int chimera_dolphin_gpu_bridge_present(void) __attribute__((weak));
 
 static constexpr uint16_t kWireBit[12] = {
@@ -122,7 +124,7 @@ extern "C" uint64_t Chimera_SettingsSerialSeconds()
 
 extern "C" bool Chimera_GetPadStatus(int chan, GCPadStatus* status)
 {
-  if (chan < 0 || chan >= 4)
+  if (chan < 0 || chan >= 4 || !s_port_present[chan])
     return false;
   const PadWire& w = s_pad[chan];
   status->button = w.buttons;
@@ -215,6 +217,13 @@ public:
     layer->Set(Config::MAIN_AUDIO_BACKEND, std::string(BACKEND_NULLSOUND));
     layer->Set(Config::MAIN_EMULATION_SPEED, 0.0f);
     layer->Set(Config::MAIN_WIIMOTE_CONTINUOUS_SCANNING, false);
+    // what is plugged into each controller port is part of the machine
+    for (int ch = 0; ch < 4; ch++)
+    {
+      layer->Set(Config::GetInfoForSIDevice(ch),
+                 s_port_present[ch] ? SerialInterface::SIDEVICE_GC_CONTROLLER :
+                                      SerialInterface::SIDEVICE_NONE);
+    }
     // the machine's clock belongs to the machine: a fixed epoch, never the host
     layer->Set(Config::MAIN_CUSTOM_RTC_ENABLE, true);
     layer->Set(Config::MAIN_CUSTOM_RTC_VALUE, u32(946684800));
@@ -508,6 +517,17 @@ const char* chimera_dolphin_domain_name(int i)
 void chimera_dolphin_set_memcard_a(int present)
 {
   s_memcard_a = present != 0;
+}
+
+void chimera_dolphin_set_port(int port, int present)
+{
+  if (port >= 0 && port < 4)
+    s_port_present[port] = present != 0;
+}
+
+int chimera_dolphin_port_present(int port)
+{
+  return port >= 0 && port < 4 && s_port_present[port];
 }
 
 void chimera_dolphin_set_renderer(const char* name)

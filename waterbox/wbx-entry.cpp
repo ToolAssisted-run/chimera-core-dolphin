@@ -76,6 +76,14 @@ ECL_EXPORT int Init(void)
   char renderer[32] = "software";
   wbx_setting_str("renderer", renderer, sizeof renderer);
   chimera_dolphin_set_renderer(renderer);
+  for (int i = 0; i < 4; i++)
+  {
+    char key[8], val[24];
+    snprintf(key, sizeof key, "port%d", i + 1);
+    snprintf(val, sizeof val, "%s", i == 0 ? "gc-controller" : "none");
+    wbx_setting_str(key, val, sizeof val);
+    chimera_dolphin_set_port(i, strcmp(val, "gc-controller") == 0);
+  }
 
   if (!chimera_dolphin_init("/user", "/sys", romName))
   {
@@ -83,6 +91,18 @@ ECL_EXPORT int Init(void)
     return 0;
   }
   return 1;
+}
+
+// Which of the declared controls this machine has: a control belongs to a
+// port, and an empty port has none of them.
+ECL_EXPORT int IsButtonActive(int32_t index)
+{
+  return index >= 0 && index < 48 && chimera_dolphin_port_present(index / 12);
+}
+
+ECL_EXPORT int IsAxisActive(int32_t index)
+{
+  return index >= 0 && index < 24 && chimera_dolphin_port_present(index / 6);
 }
 
 ECL_EXPORT void SetButton(int32_t index, int32_t state)

@@ -75,6 +75,12 @@ int main(int argc, char** argv)
       savedata_out = argv[++i];
     else if (!strcmp(argv[i], "--cpu-core") && i + 1 < argc)
       chimera_dolphin_set_cpu_core(argv[++i]);
+    else if (!strcmp(argv[i], "--ports") && i + 1 < argc)
+    {
+      const char* mask = argv[++i]; // e.g. "1010": port1 and port3
+      for (int pi = 0; pi < 4 && mask[pi]; pi++)
+        chimera_dolphin_set_port(pi, mask[pi] == '1');
+    }
     else if (!strcmp(argv[i], "--renderer") && i + 1 < argc)
     {
       const char* r = argv[++i];
