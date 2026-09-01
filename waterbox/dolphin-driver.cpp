@@ -552,7 +552,9 @@ int chimera_dolphin_port_present(int port)
 
 void chimera_dolphin_set_renderer(const char* name)
 {
-  s_renderer_opengl = name && strcmp(name, "opengl") == 0;
+  // "opengl-hw" is the package's declared value (-hw = draws on a real GPU,
+  // the convention every core shares); plain "opengl" stays as the harness alias
+  s_renderer_opengl = name && (strcmp(name, "opengl-hw") == 0 || strcmp(name, "opengl") == 0);
 }
 
 void chimera_dolphin_set_cpu_core(const char* name)

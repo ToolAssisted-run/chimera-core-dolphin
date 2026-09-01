@@ -94,7 +94,7 @@ if ! [ -s "$work/gpu-n.txt" ]; then
 	SKIP "gpu leg (no GL context: $(grep -m1 'no context' "$work/gpu-n.err" | head -c 60)) - would prove the OGL backend equal across flavors on this driver"
 else
 	CHIMERA_GPU=1 "$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" \
-		--settings '{"renderer":"opengl"}' --frames 60 --report 1 "$swiss" 2>/dev/null | grep '^frame' > "$work/gpu-g.txt"
+		--settings '{"renderer":"opengl-hw"}' --frames 60 --report 1 "$swiss" 2>/dev/null | grep '^frame' > "$work/gpu-g.txt"
 	if cmp -s "$work/gpu-n.txt" "$work/gpu-g.txt"; then PASS "gpu leg - the OGL backend drew, native == sandbox on this driver"
 	else FAIL "gpu leg - flavors differ under the GPU"; fi
 fi
