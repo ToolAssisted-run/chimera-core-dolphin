@@ -11,6 +11,21 @@
 
 #include "dolphin-driver.h"
 
+#include <execinfo.h>
+#include <pthread.h>
+#include <csignal>
+#include <thread>
+#include <sys/time.h>
+#include <unistd.h>
+
+static void DumpHandler(int)
+{
+  void* frames[32];
+  int n = backtrace(frames, 32);
+  backtrace_symbols_fd(frames, n, 2);
+  _exit(9);
+}
+
 static uint64_t fnv(const uint8_t* p, int64_t n)
 {
   uint64_t h = 1469598103934665603ULL;
@@ -30,6 +45,8 @@ int main(int argc, char** argv)
   long frames = 60;
   long report = 10;
   const char* ram_out = nullptr;
+  struct { long first, count; int index; } press[32];
+  int presses = 0;
   for (int i = 1; i < argc; i++)
   {
     if (!strcmp(argv[i], "--frames") && i + 1 < argc)
@@ -42,6 +59,18 @@ int main(int argc, char** argv)
       sys = argv[++i];
     else if (!strcmp(argv[i], "--ram-out") && i + 1 < argc)
       ram_out = argv[++i];
+    else if (!strcmp(argv[i], "--press") && i + 1 < argc && presses < 32)
+    {
+      long a, b;
+      int c;
+      if (sscanf(argv[++i], "%ld:%ld:%d", &a, &b, &c) == 3)
+      {
+        press[presses].first = a;
+        press[presses].count = b;
+        press[presses].index = c;
+        presses++;
+      }
+    }
     else
       game = argv[i];
   }
@@ -51,6 +80,17 @@ int main(int argc, char** argv)
     return 2;
   }
 
+  if (getenv("CHIMERA_WATCHDOG"))
+  {
+    signal(SIGPROF, DumpHandler);
+    std::thread([] {
+      sleep(15);
+      // a profiling timer fires on whichever thread is burning CPU - the one
+      // whose stack we want
+      struct itimerval it = {{0, 0}, {0, 10000}};
+      setitimer(ITIMER_PROF, &it, nullptr);
+    }).detach();
+  }
   if (!chimera_dolphin_init(user, sys, game))
   {
     fprintf(stderr, "init failed: %s\n", chimera_dolphin_error());
@@ -59,13 +99,25 @@ int main(int argc, char** argv)
   printf("booted paused; ram %" PRId64 " bytes\n", chimera_dolphin_ram_size());
   fflush(stdout);
 
+  long lag = 0;
   for (long f = 1; f <= frames; f++)
   {
+    for (int pi = 0; pi < presses; pi++)
+      chimera_dolphin_set_button(0, press[pi].index,
+                                 f >= press[pi].first && f < press[pi].first + press[pi].count);
     chimera_dolphin_frame();
+    if (!chimera_dolphin_input_was_read())
+      lag++;
     if (f % report == 0 || f == frames)
     {
-      printf("frame %5ld ram %016" PRIx64 "\n", f,
-             fnv(chimera_dolphin_ram_ptr(), chimera_dolphin_ram_size()));
+      int vw, vh, an;
+      const uint32_t* vid = chimera_dolphin_video(&vw, &vh);
+      const int16_t* aud = chimera_dolphin_audio(&an);
+      printf("frame %5ld ram %016" PRIx64 " vid %dx%d %016" PRIx64 " aud %d %016" PRIx64
+             " lag %ld\n",
+             f, fnv(chimera_dolphin_ram_ptr(), chimera_dolphin_ram_size()), vw, vh,
+             fnv((const uint8_t*)vid, (int64_t)vw * vh * 4), an,
+             fnv((const uint8_t*)aud, (int64_t)an * 4), lag);
       fflush(stdout);
     }
     const char* snapf = getenv("CHIMERA_SNAP_FRAME");

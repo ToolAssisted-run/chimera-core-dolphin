@@ -50,6 +50,7 @@ static intptr_t mem_read(uintptr_t ud, uint8_t *d, uintptr_t n)
 
 typedef int (MB_GUEST_ABI *intfn)(void);
 typedef void (MB_GUEST_ABI *framefn)(uint64_t);
+typedef void (MB_GUEST_ABI *btnfn)(int32_t, int32_t);
 typedef uintptr_t (MB_GUEST_ABI *ptrfn)(void);
 typedef uintptr_t (MB_GUEST_ABI *ptrfn_i)(int);
 typedef int64_t (MB_GUEST_ABI *i64fn_i)(int);
@@ -103,6 +104,8 @@ int main(int argc, char **argv)
 	const char *core = NULL, *game = NULL, *sysdir = NULL, *ramOut = NULL;
 	long frames = 60, report = 10;
 	int rewind = 0, rerecord = 0;
+	struct { long first, count; int index; } press[32];
+	int presses = 0;
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = atol(argv[++i]);
 		else if (!strcmp(argv[i], "--report") && i + 1 < argc) report = atol(argv[++i]);
@@ -110,6 +113,12 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--ram-out") && i + 1 < argc) ramOut = argv[++i];
 		else if (!strcmp(argv[i], "--rewind")) rewind = 1;
 		else if (!strcmp(argv[i], "--rerecord")) rerecord = 1;
+		else if (!strcmp(argv[i], "--press") && i + 1 < argc && presses < 32) {
+			long a, b; int c;
+			if (sscanf(argv[++i], "%ld:%ld:%d", &a, &b, &c) == 3) {
+				press[presses].first = a; press[presses].count = b; press[presses].index = c; presses++;
+			}
+		}
 		else if (!core) core = argv[i];
 		else game = argv[i];
 	}
@@ -154,6 +163,13 @@ int main(int argc, char **argv)
 	}
 
 	framefn FrameAdvance = (framefn)proc(h, "FrameAdvance");
+	btnfn SetButton = (btnfn)proc(h, "SetButton");
+	intfn InputWasRead = (intfn)proc(h, "InputWasRead");
+	ptrfn GetVideoBgra = (ptrfn)proc(h, "GetVideoBgra");
+	intfn GetVideoWidth = (intfn)proc(h, "GetVideoWidth");
+	intfn GetVideoHeight = (intfn)proc(h, "GetVideoHeight");
+	ptrfn GetAudio = (ptrfn)proc(h, "GetAudio");
+	intfn GetAudioSampleCount = (intfn)proc(h, "GetAudioSampleCount");
 	ptrfn_i GetMemoryDomainPtr = (ptrfn_i)proc(h, "GetMemoryDomainPtr");
 	i64fn_i GetMemoryDomainSize = (i64fn_i)proc(h, "GetMemoryDomainSize");
 
@@ -189,7 +205,10 @@ int main(int argc, char **argv)
 		return pass1 == pass2 ? 0 : 1;
 	}
 
+	long lag = 0;
 	for (long f = 1; f <= frames; f++) {
+		for (int pi = 0; pi < presses; pi++)
+			SetButton(press[pi].index, f >= press[pi].first && f < press[pi].first + press[pi].count);
 		if (rerecord) {
 			/* save+load around every frame; the digests must match a plain run */
 			membuf st = {0};
@@ -201,8 +220,15 @@ int main(int argc, char **argv)
 			free(st.b);
 		}
 		FrameAdvance(0);
+		if (!InputWasRead()) lag++;
 		if (f % report == 0 || f == frames) {
-			printf("frame %5ld ram %016llx\n", f, (unsigned long long)fnv(0, ram, (size_t)ramSize));
+			int vw = GetVideoWidth(), vh = GetVideoHeight(), an = GetAudioSampleCount();
+			const uint8_t *vid = (const uint8_t *)GetVideoBgra();
+			const uint8_t *aud = (const uint8_t *)GetAudio();
+			printf("frame %5ld ram %016llx vid %dx%d %016llx aud %d %016llx lag %ld\n",
+			       f, (unsigned long long)fnv(0, ram, (size_t)ramSize), vw, vh,
+			       (unsigned long long)fnv(0, vid, (size_t)vw * vh * 4), an,
+			       (unsigned long long)fnv(0, aud, (size_t)an * 4), lag);
 			fflush(stdout);
 		}
 	}

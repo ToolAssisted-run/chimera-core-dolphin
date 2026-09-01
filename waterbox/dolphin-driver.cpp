@@ -24,12 +24,108 @@
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/System.h"
 #include "AudioCommon/AudioCommon.h"
+#include "AudioCommon/Mixer.h"
+#include "AudioCommon/SoundStream.h"
+#include "Core/HW/VideoInterface.h"
+#include "InputCommon/GCPadStatus.h"
 #include "VideoCommon/VideoBackendBase.h"
 #include "UICommon/UICommon.h"
 
 #include "dolphin-driver.h"
 
 static std::string s_error;
+
+// ---- the input wire -------------------------------------------------------
+// Wire order (waterbox.config to declare the same): buttons
+// 0 A, 1 B, 2 X, 3 Y, 4 Z, 5 Start, 6 Up, 7 Down, 8 Left, 9 Right, 10 L, 11 R;
+// axes 0 MainX, 1 MainY, 2 CX, 3 CY, 4 TriggerL, 5 TriggerR (0..255, 128 center).
+struct PadWire
+{
+  uint16_t buttons = 0;
+  uint8_t axis[6] = {0x80, 0x80, 0x80, 0x80, 0, 0};
+};
+static PadWire s_pad[4];
+static bool s_input_read;
+
+static constexpr uint16_t kWireBit[12] = {
+    PAD_BUTTON_A,    PAD_BUTTON_B,    PAD_BUTTON_X,    PAD_BUTTON_Y,
+    PAD_TRIGGER_Z,   PAD_BUTTON_START, PAD_BUTTON_UP,  PAD_BUTTON_DOWN,
+    PAD_BUTTON_LEFT, PAD_BUTTON_RIGHT, PAD_TRIGGER_L,  PAD_TRIGGER_R,
+};
+
+// ---- video out ------------------------------------------------------------
+// The field hook converts the scanned-out XFB (YUYV in guest RAM) to BGRA.
+// Interlaced content arrives one field at a time; for now the latest field IS
+// the picture (the PS2 deinterlacing lessons apply later).
+static uint32_t s_video[720 * 574];
+static int s_video_w = 640, s_video_h = 480;
+
+// ---- audio out ------------------------------------------------------------
+static int16_t s_audio[16384 * 2];
+static int s_audio_frames;
+static uint64_t s_audio_acc;
+
+static uint32_t YuyvToBgra(int y, int u, int v)
+{
+  const int c = y - 16, d = u - 128, e = v - 128;
+  auto clamp = [](int x) { return x < 0 ? 0 : (x > 255 ? 255 : x); };
+  const int r = clamp((298 * c + 409 * e + 128) >> 8);
+  const int g = clamp((298 * c - 100 * d - 208 * e + 128) >> 8);
+  const int b = clamp((298 * c + 516 * d + 128) >> 8);
+  return 0xFF000000u | (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
+}
+
+extern "C" bool Chimera_GetPadStatus(int chan, GCPadStatus* status)
+{
+  if (chan < 0 || chan >= 4)
+    return false;
+  const PadWire& w = s_pad[chan];
+  status->button = w.buttons;
+  status->stickX = w.axis[0];
+  status->stickY = w.axis[1];
+  status->substickX = w.axis[2];
+  status->substickY = w.axis[3];
+  status->triggerLeft = uint8_t(w.buttons & PAD_TRIGGER_L ? 255 : w.axis[4]);
+  status->triggerRight = uint8_t(w.buttons & PAD_TRIGGER_R ? 255 : w.axis[5]);
+  status->isConnected = true;
+  if (chan == 0)
+    s_input_read = true;
+  return true;
+}
+
+extern "C" void Chimera_OutputField(int /*field*/, uint32_t xfb_addr, uint32_t fb_width,
+                                    uint32_t fb_stride, uint32_t fb_height)
+{
+  static int logged;
+  if (logged < 3 && getenv("CHIMERA_TRACE_FIELD"))
+  {
+    fprintf(stderr, "[field] xfb %08x w %u stride %u h %u\n", xfb_addr, fb_width, fb_stride,
+            fb_height);
+    logged++;
+  }
+  if (!xfb_addr || !fb_width || !fb_height)
+    return;
+  auto& memory = Core::System::GetInstance().GetMemory();
+  const uint32_t w = fb_width > 720 ? 720 : fb_width;
+  const uint32_t h = fb_height > 574 ? 574 : fb_height;
+  const uint8_t* src = memory.GetPointerForRange(xfb_addr, fb_stride * h);
+  if (!src)
+    return;
+  for (uint32_t line = 0; line < h; line++)
+  {
+    const uint8_t* p = src + line * fb_stride;
+    uint32_t* out = s_video + line * w;
+    for (uint32_t x = 0; x + 1 < w; x += 2)
+    {
+      const int y0 = p[0], u = p[1], y1 = p[2], v = p[3];
+      out[x] = YuyvToBgra(y0, u, v);
+      out[x + 1] = YuyvToBgra(y1, u, v);
+      p += 4;
+    }
+  }
+  s_video_w = int(w);
+  s_video_h = int(h);
+}
 
 // Every alert is answered "yes" and logged; a machine has nobody to ask.
 static bool AlertHandler(const char* caption, const char* text, bool /*yes_no*/,
@@ -75,9 +171,12 @@ static Core::System& Sys()
 // that failed tears down to Uninitialized, and spinning on it helps nobody.
 static bool WaitForState(Core::State want)
 {
+  long spins = 0;
   for (;;)
   {
     const Core::State got = Core::GetState(Sys());
+    if (getenv("CHIMERA_TRACE_STATE") && ++spins % 100000 == 0)
+      fprintf(stderr, "[state] want %d got %d\n", int(want), int(got));
     if (got == want)
       return true;
     if (got == Core::State::Uninitialized && want != Core::State::Uninitialized)
@@ -134,6 +233,10 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
   }
   fprintf(stderr, "[driver] video backend: %s\n",
           g_video_backend ? g_video_backend->GetConfigName().c_str() : "(none)");
+  // NullSound zeroes the mixer's output rate so nothing consumes samples;
+  // the harness IS the consumer, at dolphin's canonical output rate.
+  if (Sys().GetSoundStream())
+    Sys().GetSoundStream()->GetMixer()->SetSampleRate(48000);
   return 1;
 }
 
@@ -142,6 +245,7 @@ void chimera_dolphin_frame(void)
   // DoFrameStep stores Running before it returns and the machine stores
   // Paused at the end of the next VI field, so waiting for Paused after the
   // call cannot race the step.
+  s_input_read = false;
   Core::DoFrameStep(Sys());
   WaitForState(Core::State::Paused);
   // The state flag flips to Paused before the CPU thread has fully settled;
@@ -151,6 +255,80 @@ void chimera_dolphin_frame(void)
   {
     const Core::CPUThreadGuard guard(Sys());
   }
+
+  // Drain the mixer: the machine made this much time pass, so this many
+  // samples exist. The remainder accumulates so no fraction is ever lost.
+  Mixer* mixer = Sys().GetSoundStream() ? Sys().GetSoundStream()->GetMixer() : nullptr;
+  static int audlog;
+  if (audlog < 2 && getenv("CHIMERA_TRACE_FIELD"))
+  {
+    auto& vi = Sys().GetVideoInterface();
+    fprintf(stderr, "[aud] stream %p mixer %p rate %u num %u den %u\n",
+            (void*)Sys().GetSoundStream(), (void*)mixer, mixer ? mixer->GetSampleRate() : 0,
+            vi.GetTargetRefreshRateNumerator(), vi.GetTargetRefreshRateDenominator());
+    audlog++;
+  }
+  s_audio_frames = 0;
+  if (mixer)
+  {
+    auto& vi = Sys().GetVideoInterface();
+    const uint64_t num = vi.GetTargetRefreshRateNumerator();
+    const uint64_t den = vi.GetTargetRefreshRateDenominator();
+    if (num)
+    {
+      s_audio_acc += uint64_t(mixer->GetSampleRate()) * den;
+      uint64_t want = s_audio_acc / num;
+      s_audio_acc %= num;
+      if (want > 16384)
+        want = 16384;
+      s_audio_frames = int(mixer->Mix(s_audio, size_t(want)));
+    }
+  }
+}
+
+void chimera_dolphin_set_button(int pad, int index, int state)
+{
+  if (pad < 0 || pad >= 4 || index < 0 || index >= 12)
+    return;
+  if (state)
+    s_pad[pad].buttons |= kWireBit[index];
+  else
+    s_pad[pad].buttons &= uint16_t(~kWireBit[index]);
+}
+
+void chimera_dolphin_set_axis(int pad, int index, int value)
+{
+  if (pad < 0 || pad >= 4 || index < 0 || index >= 6)
+    return;
+  s_pad[pad].axis[index] = uint8_t(value < 0 ? 0 : (value > 255 ? 255 : value));
+}
+
+int chimera_dolphin_input_was_read(void)
+{
+  return s_input_read ? 1 : 0;
+}
+
+const uint32_t* chimera_dolphin_video(int* w, int* h)
+{
+  *w = s_video_w;
+  *h = s_video_h;
+  return s_video;
+}
+
+const int16_t* chimera_dolphin_audio(int* frames)
+{
+  *frames = s_audio_frames;
+  return s_audio;
+}
+
+int chimera_dolphin_vsync_numerator(void)
+{
+  return int(Sys().GetVideoInterface().GetTargetRefreshRateNumerator());
+}
+
+int chimera_dolphin_vsync_denominator(void)
+{
+  return int(Sys().GetVideoInterface().GetTargetRefreshRateDenominator());
 }
 
 uint8_t* chimera_dolphin_ram_ptr(void)

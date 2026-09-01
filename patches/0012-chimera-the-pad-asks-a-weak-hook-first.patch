@@ -1,0 +1,26 @@
+diff --git a/Source/Core/Core/HW/SI/SI_DeviceGCController.cpp b/Source/Core/Core/HW/SI/SI_DeviceGCController.cpp
+index 1f7a7b631b..be0c32c829 100644
+--- a/Source/Core/Core/HW/SI/SI_DeviceGCController.cpp
++++ b/Source/Core/Core/HW/SI/SI_DeviceGCController.cpp
+@@ -138,6 +142,10 @@ void CSIDevice_GCController::HandleMoviePadStatus(Movie::MovieManager& movie, in
+   }
+ }
+ 
++// A host embedding the core may answer polls itself; the weak symbol is
++// null in every other build and the normal path runs.
++extern "C" bool Chimera_GetPadStatus(int chan, GCPadStatus* status) __attribute__((weak));
++
+ GCPadStatus CSIDevice_GCController::GetPadStatus()
+ {
+   GCPadStatus pad_status = {};
+@@ -146,7 +154,8 @@ GCPadStatus CSIDevice_GCController::GetPadStatus()
+   // the remote controllers receive their status there as well
+   if (!NetPlay::IsNetPlayRunning())
+   {
+-    pad_status = Pad::GetStatus(m_device_number);
++    if (!(Chimera_GetPadStatus && Chimera_GetPadStatus(m_device_number, &pad_status)))
++      pad_status = Pad::GetStatus(m_device_number);
+   }
+ 
+   HandleMoviePadStatus(m_system.GetMovie(), m_device_number, &pad_status);
+

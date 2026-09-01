@@ -1,0 +1,26 @@
+diff --git a/Source/Core/Core/HW/VideoInterface.cpp b/Source/Core/Core/HW/VideoInterface.cpp
+index 42e0f350ba..d8e8e9db3d 100644
+--- a/Source/Core/Core/HW/VideoInterface.cpp
++++ b/Source/Core/Core/HW/VideoInterface.cpp
+@@ -801,6 +801,11 @@ void VideoInterfaceManager::LogField(FieldType field, u32 xfb_address) const
+                 GetTicksPerOddField());
+ }
+ 
++// A host embedding the core can watch fields scan out with the machine's own
++// numbers; null everywhere else.
++extern "C" void Chimera_OutputField(int field, u32 xfb_addr, u32 fb_width, u32 fb_stride,
++                                    u32 fb_height) __attribute__((weak));
++
+ void VideoInterfaceManager::OutputField(FieldType field, u64 ticks)
+ {
+   // Could we fit a second line of data in the stride?
+@@ -829,6 +834,9 @@ void VideoInterfaceManager::OutputField(FieldType field, u64 ticks)
+   // Multiply the stride by 2 to get the byte offset for each subsequent line.
+   fbStride *= 2;
+ 
++  if (Chimera_OutputField)
++    Chimera_OutputField(field == FieldType::Even ? 1 : 0, xfbAddr, fbWidth, fbStride, fbHeight);
++
+   if (potentially_interlaced_xfb && interlaced_video_mode &&
+       Config::Get(Config::GFX_HACK_FORCE_PROGRESSIVE))
+   {

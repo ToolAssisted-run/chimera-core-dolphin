@@ -54,9 +54,65 @@ ECL_EXPORT int Init(void)
   return 1;
 }
 
+ECL_EXPORT void SetButton(int32_t index, int32_t state)
+{
+  chimera_dolphin_set_button(index / 12, index % 12, state);
+}
+
+ECL_EXPORT void SetAxis(int32_t index, int32_t value)
+{
+  // the frontend's signed axis (-128..127) onto the pad's biased byte
+  chimera_dolphin_set_axis(index / 6, index % 6, value + 128);
+}
+
 ECL_EXPORT void FrameAdvance(uint64_t /*input*/)
 {
   chimera_dolphin_frame();
+}
+
+ECL_EXPORT int InputWasRead(void)
+{
+  return chimera_dolphin_input_was_read();
+}
+
+static int g_vw, g_vh, g_an;
+
+ECL_EXPORT uint32_t* GetVideoBgra(void)
+{
+  return const_cast<uint32_t*>(chimera_dolphin_video(&g_vw, &g_vh));
+}
+
+ECL_EXPORT int GetVideoWidth(void)
+{
+  chimera_dolphin_video(&g_vw, &g_vh);
+  return g_vw;
+}
+
+ECL_EXPORT int GetVideoHeight(void)
+{
+  chimera_dolphin_video(&g_vw, &g_vh);
+  return g_vh;
+}
+
+ECL_EXPORT int16_t* GetAudio(void)
+{
+  return const_cast<int16_t*>(chimera_dolphin_audio(&g_an));
+}
+
+ECL_EXPORT int GetAudioSampleCount(void)
+{
+  chimera_dolphin_audio(&g_an);
+  return g_an;
+}
+
+ECL_EXPORT int GetVsyncNumerator(void)
+{
+  return chimera_dolphin_vsync_numerator();
+}
+
+ECL_EXPORT int GetVsyncDenominator(void)
+{
+  return chimera_dolphin_vsync_denominator();
 }
 
 ECL_EXPORT int GetMemoryDomainCount(void)

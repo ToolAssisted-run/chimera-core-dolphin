@@ -1,0 +1,19 @@
+diff --git a/Source/Core/Core/HW/SI/SI_DeviceGCController.cpp b/Source/Core/Core/HW/SI/SI_DeviceGCController.cpp
+index 1f7a7b631b..be0c32c829 100644
+--- a/Source/Core/Core/HW/SI/SI_DeviceGCController.cpp
++++ b/Source/Core/Core/HW/SI/SI_DeviceGCController.cpp
+@@ -98,9 +98,13 @@ int CSIDevice_GCController::RunBuffer(u8* buffer, int request_length)
+   // GameID packet, no response needed, nothing to do
+   // On real hardware, this is used to configure the BlueRetro controller
+   // adapter, while licensed accessories ignore this command.
++  // Returning 0 would mean "response not ready, retry in TransferInterval()
++  // cycles" - which is 0 for this device, so the transfer would re-run at the
++  // same tick forever. An ignored packet is a completed transfer with no
++  // response, which is what -1 reports.
+   case EBufferCommands::CMD_SET_GAME_ID:
+   {
+-    return 0;
++    return -1;
+   }
+ 
+   // DEFAULT
