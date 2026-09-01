@@ -1,0 +1,44 @@
+diff --git a/Source/Core/Common/FilesystemWatcher.cpp b/Source/Core/Common/FilesystemWatcher.cpp
+index 94970232b2..f4850dd51b 100644
+--- a/Source/Core/Common/FilesystemWatcher.cpp
++++ b/Source/Core/Common/FilesystemWatcher.cpp
+@@ -3,7 +3,21 @@
+ 
+ #include "Common/FilesystemWatcher.h"
+ 
++#ifdef HAVE_FSWATCHER
+ #include <wtr/watcher.hpp>
++#else
++// Without the watcher external the class is inert: paths are accepted and
++// never fire. A complete dummy type keeps the header's unique_ptr valid.
++namespace wtr
++{
++inline namespace watcher
++{
++class watch
++{
++};
++}  // namespace watcher
++}  // namespace wtr
++#endif
+ 
+ #include "Common/Logging/Log.h"
+ #include "Common/StringUtil.h"
+@@ -15,7 +29,8 @@ FilesystemWatcher::~FilesystemWatcher() = default;
+ 
+ void FilesystemWatcher::Watch(const std::string& path)
+ {
+-  const auto [iter, inserted] = m_watched_paths.try_emplace(path, nullptr);
++  [[maybe_unused]] const auto [iter, inserted] = m_watched_paths.try_emplace(path, nullptr);
++#ifdef HAVE_FSWATCHER
+   if (inserted)
+   {
+     iter->second = std::make_unique<wtr::watch>(path, [this](wtr::event e) {
+@@ -58,6 +73,7 @@ void FilesystemWatcher::Watch(const std::string& path)
+       }
+     });
+   }
++#endif
+ }
+ 
+ void FilesystemWatcher::Unwatch(const std::string& path)

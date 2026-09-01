@@ -1,0 +1,78 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8f62d7f847..cd4660a3d1 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -695,7 +695,8 @@ if(ENABLE_CUBEB)
+   add_definitions(-DHAVE_CUBEB)
+ endif()
+ 
+-if(NOT ANDROID)
++option(USE_LIBUSB "Enables real USB device passthrough via libusb" ON)
++if(NOT ANDROID AND USE_LIBUSB)
+   dolphin_find_optional_system_library(LibUSB Externals/libusb)
+   add_definitions(-D__LIBUSB__)
+ endif()
+@@ -716,7 +717,8 @@ dolphin_find_optional_system_library(MBEDTLS Externals/mbedtls 2.28)
+ 
+ dolphin_find_optional_system_library(CURL Externals/curl)
+ 
+-if(NOT ANDROID)
++option(USE_HIDAPI "Enables raw HID device access via hidapi" ON)
++if(NOT ANDROID AND USE_HIDAPI)
+   dolphin_find_optional_system_library(HIDAPI Externals/hidapi)
+ endif()
+ 
+@@ -753,10 +755,15 @@ if (USE_RETRO_ACHIEVEMENTS)
+   add_subdirectory(Externals/rcheevos)
+ endif()
+ 
+-add_subdirectory(Externals/watcher)
++option(USE_FSWATCHER "Watch the filesystem for changed files (resource pack / graphics mod hot reload)" ON)
++if(USE_FSWATCHER)
++  add_subdirectory(Externals/watcher)
++  add_definitions(-DHAVE_FSWATCHER=1)
++endif()
+ 
++option(USE_CPPIPC "Enables the broadband adapter's local IPC backend via cpp-ipc" ON)
+ # Any other platform or BSD is currently unsupported by cpp-ipc
+-if(WIN32 OR LINUX OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD" OR CMAKE_SYSTEM_NAME STREQUAL "QNX")
++if(USE_CPPIPC AND (WIN32 OR LINUX OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD" OR CMAKE_SYSTEM_NAME STREQUAL "QNX"))
+   add_subdirectory(Externals/cpp-ipc)
+   add_definitions(-DHAVE_CPPIPC)
+ endif()
+diff --git a/Source/Core/Common/CMakeLists.txt b/Source/Core/Common/CMakeLists.txt
+index 97d8ad8f14..7ed6bbc4b6 100644
+--- a/Source/Core/Common/CMakeLists.txt
++++ b/Source/Core/Common/CMakeLists.txt
+@@ -190,7 +190,7 @@ PRIVATE
+   CURL::libcurl
+   FatFs
+   spng::spng
+-  watcher
++  "$<$<BOOL:${USE_FSWATCHER}>:watcher>"
+   ${VTUNE_LIBRARIES}
+ )
+ 
+@@ -370,7 +370,8 @@ if(ENABLE_LLVM)
+   endif()
+ endif()
+ 
+-if(UNIX)
++option(BUILD_TRAVERSAL_SERVER "Build the netplay traversal server" ON)
++if(UNIX AND BUILD_TRAVERSAL_SERVER)
+   # Posix networking code needs to be fixed for Windows
+   add_executable(traversal_server TraversalServer.cpp)
+   target_link_libraries(traversal_server PRIVATE common fmt::fmt)
+diff --git a/Source/Core/InputCommon/CMakeLists.txt b/Source/Core/InputCommon/CMakeLists.txt
+index 5cc6b66ca6..036aa2ef9b 100644
+--- a/Source/Core/InputCommon/CMakeLists.txt
++++ b/Source/Core/InputCommon/CMakeLists.txt
+@@ -144,7 +144,7 @@ elseif(ANDROID)
+   )
+ endif()
+ 
+-if(NOT ANDROID)
++if(TARGET LibUSB::LibUSB)
+   target_link_libraries(inputcommon PUBLIC LibUSB::LibUSB)
+ endif()
+ 

@@ -1,0 +1,107 @@
+diff --git a/Source/Core/Core/HW/EXI/BBA/TAP_Unix.cpp b/Source/Core/Core/HW/EXI/BBA/TAP_Unix.cpp
+index a147cc7073..682c0c4e35 100644
+--- a/Source/Core/Core/HW/EXI/BBA/TAP_Unix.cpp
++++ b/Source/Core/Core/HW/EXI/BBA/TAP_Unix.cpp
+@@ -12,7 +12,7 @@
+ #include "Common/Logging/Log.h"
+ #include "Common/StringUtil.h"
+ 
+-#ifdef __linux__
++#if defined(__linux__) && __has_include(<linux/if_tun.h>)
+ #include <fcntl.h>
+ #include <linux/if_tun.h>
+ #include <net/if.h>
+@@ -27,7 +27,7 @@ namespace ExpansionInterface
+ 
+ bool CEXIETHERNET::TAPNetworkInterface::Activate()
+ {
+-#ifdef __linux__
++#if defined(__linux__) && __has_include(<linux/if_tun.h>)
+   if (IsActivated())
+     return true;
+ 
+@@ -77,7 +77,7 @@ bool CEXIETHERNET::TAPNetworkInterface::Activate()
+ 
+ void CEXIETHERNET::TAPNetworkInterface::Deactivate()
+ {
+-#ifdef __linux__
++#if defined(__linux__) && __has_include(<linux/if_tun.h>)
+   close(fd);
+   fd = -1;
+ 
+@@ -92,7 +92,7 @@ void CEXIETHERNET::TAPNetworkInterface::Deactivate()
+ 
+ bool CEXIETHERNET::TAPNetworkInterface::IsActivated()
+ {
+-#ifdef __linux__
++#if defined(__linux__) && __has_include(<linux/if_tun.h>)
+   return fd != -1 ? true : false;
+ #else
+   return false;
+@@ -101,7 +101,7 @@ bool CEXIETHERNET::TAPNetworkInterface::IsActivated()
+ 
+ bool CEXIETHERNET::TAPNetworkInterface::SendFrame(const u8* frame, u32 size)
+ {
+-#ifdef __linux__
++#if defined(__linux__) && __has_include(<linux/if_tun.h>)
+   DEBUG_LOG_FMT(SP1, "SendFrame {}\n{}", size, ArrayToString(frame, size, 0x10));
+ 
+   int writtenBytes = write(fd, frame, size);
+@@ -122,7 +122,7 @@ bool CEXIETHERNET::TAPNetworkInterface::SendFrame(const u8* frame, u32 size)
+ #endif
+ }
+ 
+-#ifdef __linux__
++#if defined(__linux__) && __has_include(<linux/if_tun.h>)
+ void CEXIETHERNET::TAPNetworkInterface::ReadThreadHandler(TAPNetworkInterface* self)
+ {
+   while (!self->readThreadShutdown.IsSet())
+@@ -155,7 +155,7 @@ void CEXIETHERNET::TAPNetworkInterface::ReadThreadHandler(TAPNetworkInterface* s
+ 
+ bool CEXIETHERNET::TAPNetworkInterface::RecvInit()
+ {
+-#ifdef __linux__
++#if defined(__linux__) && __has_include(<linux/if_tun.h>)
+   readThread = std::thread(ReadThreadHandler, this);
+   return true;
+ #else
+@@ -166,7 +166,7 @@ bool CEXIETHERNET::TAPNetworkInterface::RecvInit()
+ 
+ void CEXIETHERNET::TAPNetworkInterface::RecvStart()
+ {
+-#ifdef __linux__
++#if defined(__linux__) && __has_include(<linux/if_tun.h>)
+   readEnabled.Set();
+ #else
+   NOTIMPLEMENTED("RecvStart");
+@@ -175,7 +175,7 @@ void CEXIETHERNET::TAPNetworkInterface::RecvStart()
+ 
+ void CEXIETHERNET::TAPNetworkInterface::RecvStop()
+ {
+-#ifdef __linux__
++#if defined(__linux__) && __has_include(<linux/if_tun.h>)
+   readEnabled.Clear();
+ #else
+   NOTIMPLEMENTED("RecvStop");
+diff --git a/Source/Core/Core/IOS/Network/IP/Top.cpp b/Source/Core/Core/IOS/Network/IP/Top.cpp
+index e38fd1df01..0be82069fa 100644
+--- a/Source/Core/Core/IOS/Network/IP/Top.cpp
++++ b/Source/Core/Core/IOS/Network/IP/Top.cpp
+@@ -53,7 +53,7 @@
+ #include "jni/AndroidCommon/AndroidCommon.h"
+ #endif
+ 
+-#ifdef __linux__
++#if defined(__linux__) && __has_include(<linux/netlink.h>)
+ #include <linux/netlink.h>
+ #include <linux/rtnetlink.h>
+ #endif
+@@ -232,7 +232,7 @@ static std::vector<InterfaceRouting> GetSystemInterfaceRouting()
+     result = GetIpForwardTable(forward_table.get(), &forward_table_size, FALSE);
+   }
+ 
+-#elif defined(__linux__)
++#elif defined(__linux__) && __has_include(<linux/netlink.h>)
+   constexpr int BUFF_SIZE = 8192;
+   constexpr timeval socket_timeout{.tv_sec = 2, .tv_usec = 0};
+   unsigned int msg_seq = 0;

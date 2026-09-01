@@ -1,0 +1,23 @@
+diff --git a/Source/Core/InputCommon/GCAdapter.cpp b/Source/Core/InputCommon/GCAdapter.cpp
+index dbffc4d81d..e015d948bd 100644
+--- a/Source/Core/InputCommon/GCAdapter.cpp
++++ b/Source/Core/InputCommon/GCAdapter.cpp
+@@ -3,12 +3,16 @@
+ 
+ #include "InputCommon/GCAdapter.h"
+ 
+-#ifndef ANDROID
++#if defined(ANDROID)
++#define GCADAPTER_USE_LIBUSB_IMPLEMENTATION false
++#define GCADAPTER_USE_ANDROID_IMPLEMENTATION true
++#elif defined(__LIBUSB__)
+ #define GCADAPTER_USE_LIBUSB_IMPLEMENTATION true
+ #define GCADAPTER_USE_ANDROID_IMPLEMENTATION false
+ #else
++// Built without libusb: no adapter is ever detected.
+ #define GCADAPTER_USE_LIBUSB_IMPLEMENTATION false
+-#define GCADAPTER_USE_ANDROID_IMPLEMENTATION true
++#define GCADAPTER_USE_ANDROID_IMPLEMENTATION false
+ #endif
+ 
+ #include <array>
