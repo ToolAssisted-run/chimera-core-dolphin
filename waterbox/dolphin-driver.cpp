@@ -16,6 +16,7 @@
 #include "Common/Logging/LogManager.h"
 #include "Common/WindowSystemInfo.h"
 #include "Core/Boot/Boot.h"
+#include "Core/BootManager.h"
 #include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
@@ -117,9 +118,12 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
     s_error = "could not make boot parameters from the given path";
     return 0;
   }
-  if (!Core::Init(Sys(), std::move(boot), wsi))
+  // BootManager owns the whole boot ritual (config game layers, SYSCONF
+  // control transfer, determinism update) - bypassing it for Core::Init left
+  // the shutdown transfer asserting.
+  if (!BootManager::BootCore(Sys(), std::move(boot), wsi))
   {
-    s_error = "Core::Init refused";
+    s_error = "BootManager::BootCore refused";
     return 0;
   }
   if (!WaitForState(Core::State::Paused))
