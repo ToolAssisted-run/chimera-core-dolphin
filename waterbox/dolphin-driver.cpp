@@ -69,9 +69,10 @@ static constexpr uint16_t kWireBit[12] = {
 
 // ---- video out ------------------------------------------------------------
 // The field hook converts the scanned-out XFB (YUYV in guest RAM) to BGRA.
-// Interlaced content arrives one field at a time; for now the latest field IS
-// the picture (the PS2 deinterlacing lessons apply later).
-static uint32_t s_video[720 * 574];
+// It fires AFTER the VI's progressive reassembly (ForceProgressive, dolphin's
+// default): an interlaced game's two fields hand out the same full-height
+// frame, so the picture holds still instead of bobbing a line at field rate.
+static uint32_t s_video[720 * 576];
 static int s_video_w = 640, s_video_h = 480;
 
 // ---- save data ------------------------------------------------------------
@@ -156,7 +157,7 @@ extern "C" void Chimera_OutputField(int /*field*/, uint32_t xfb_addr, uint32_t f
     return;
   auto& memory = Core::System::GetInstance().GetMemory();
   const uint32_t w = fb_width > 720 ? 720 : fb_width;
-  const uint32_t h = fb_height > 574 ? 574 : fb_height;
+  const uint32_t h = fb_height > 576 ? 576 : fb_height;
   const uint8_t* src = memory.GetPointerForRange(xfb_addr, fb_stride * h);
   if (!src)
     return;
