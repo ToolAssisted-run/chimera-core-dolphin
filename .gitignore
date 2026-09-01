@@ -7,3 +7,4 @@ waterbox/obj-native/
 waterbox/obj-guest/
 waterbox/work/
 build-*.log
+waterbox/bin/
