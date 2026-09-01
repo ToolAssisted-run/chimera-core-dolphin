@@ -8,3 +8,4 @@ waterbox/obj-guest/
 waterbox/work/
 build-*.log
 waterbox/bin/
+generated-gl/

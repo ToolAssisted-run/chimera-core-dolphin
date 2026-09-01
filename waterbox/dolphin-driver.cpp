@@ -32,7 +32,9 @@
 #include "AudioCommon/SoundStream.h"
 #include "Core/HW/VideoInterface.h"
 #include "InputCommon/GCPadStatus.h"
+#include "Core/Config/GraphicsSettings.h"
 #include "VideoCommon/VideoBackendBase.h"
+#include "VideoCommon/VideoConfig.h"
 #include "UICommon/UICommon.h"
 
 #include "dolphin-driver.h"
@@ -52,6 +54,8 @@ static PadWire s_pad[4];
 static bool s_input_read;
 static bool s_memcard_a = true;
 static PowerPC::CPUCore s_cpu_core = PowerPC::CPUCore::JIT64;
+static bool s_renderer_opengl;
+extern "C" int chimera_dolphin_gpu_bridge_present(void) __attribute__((weak));
 
 static constexpr uint16_t kWireBit[12] = {
     PAD_BUTTON_A,    PAD_BUTTON_B,    PAD_BUTTON_X,    PAD_BUTTON_Y,
@@ -185,7 +189,20 @@ public:
     // handler; these remove the askers)
     layer->Set(Config::MAIN_FASTMEM, false);
     layer->Set(Config::MAIN_FASTMEM_ARENA, false);
-    layer->Set(Config::MAIN_GFX_BACKEND, std::string("Software Renderer"));
+    const bool gl = s_renderer_opengl && chimera_dolphin_gpu_bridge_present &&
+                    chimera_dolphin_gpu_bridge_present();
+    layer->Set(Config::MAIN_GFX_BACKEND, std::string(gl ? "OGL" : "Software Renderer"));
+    if (gl)
+    {
+      // the machine's video memory stays machine state: EFB and XFB copies
+      // land in RAM (GPU readbacks), which is what the gate hashes and what
+      // games that read their own picture depend on
+      layer->Set(Config::GFX_HACK_SKIP_EFB_COPY_TO_RAM, false);
+      layer->Set(Config::GFX_HACK_SKIP_XFB_COPY_TO_RAM, false);
+      // one real context: no worker-thread compilers, no disk shader cache
+      layer->Set(Config::GFX_SHADER_COMPILATION_MODE, ShaderCompilationMode::Synchronous);
+      layer->Set(Config::GFX_SHADER_CACHE, false);
+    }
     layer->Set(Config::MAIN_DSP_HLE, true);
     layer->Set(Config::MAIN_DSP_JIT, false);
     layer->Set(Config::MAIN_AUDIO_BACKEND, std::string(BACKEND_NULLSOUND));
@@ -436,6 +453,11 @@ const char* chimera_dolphin_domain_name(int i)
 void chimera_dolphin_set_memcard_a(int present)
 {
   s_memcard_a = present != 0;
+}
+
+void chimera_dolphin_set_renderer(const char* name)
+{
+  s_renderer_opengl = name && strcmp(name, "opengl") == 0;
 }
 
 void chimera_dolphin_set_cpu_core(const char* name)

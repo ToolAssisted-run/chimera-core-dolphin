@@ -74,6 +74,22 @@ for core in interpreter cached-interpreter; do
 	else FAIL "cpu core '$core' - rerecord leg"; fi
 done
 
+# ---- the GPU bridge: a real driver, the same bytes both flavors ------------
+# The GPU is outside the sandbox and different on every machine, so this leg
+# proves equality ON THIS DRIVER only - and SKIPs, not fails, where no GL
+# context exists at all.
+rm -rf "$work/gpu-n"
+"$here/obj-native/run-native" --sys "$sys" --user "$work/gpu-n" --renderer opengl \
+	--frames 60 --report 1 "$swiss" 2>"$work/gpu-n.err" | grep '^frame' > "$work/gpu-n.txt"
+if ! [ -s "$work/gpu-n.txt" ]; then
+	SKIP "gpu leg (no GL context: $(grep -m1 'no context' "$work/gpu-n.err" | head -c 60)) - would prove the OGL backend equal across flavors on this driver"
+else
+	CHIMERA_GPU=1 "$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" \
+		--settings '{"renderer":"opengl"}' --frames 60 --report 1 "$swiss" 2>/dev/null | grep '^frame' > "$work/gpu-g.txt"
+	if cmp -s "$work/gpu-n.txt" "$work/gpu-g.txt"; then PASS "gpu leg - the OGL backend drew, native == sandbox on this driver"
+	else FAIL "gpu leg - flavors differ under the GPU"; fi
+fi
+
 # ---- tier 2: a commercial disc --------------------------------------------
 if [ -f "$disc" ]; then
 	nat d1 --frames "$frames" --report 1 "$disc" > "$work/d1.txt"

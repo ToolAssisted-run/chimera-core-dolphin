@@ -18,6 +18,10 @@
 
 static char g_loadError[512];
 
+#ifdef CHIMERA_GL_BRIDGE
+extern "C" void chimera_dolphin_install_gpu_bridge(uint64_t addr);
+#endif
+
 extern "C" {
 
 ECL_EXPORT const char* GetLoadError(void)
@@ -69,6 +73,9 @@ ECL_EXPORT int Init(void)
   char cpuCore[32] = "jit";
   wbx_setting_str("cpu_core", cpuCore, sizeof cpuCore);
   chimera_dolphin_set_cpu_core(cpuCore);
+  char renderer[32] = "software";
+  wbx_setting_str("renderer", renderer, sizeof renderer);
+  chimera_dolphin_set_renderer(renderer);
 
   if (!chimera_dolphin_init("/user", "/sys", romName))
   {
@@ -88,6 +95,13 @@ ECL_EXPORT void SetAxis(int32_t index, int32_t value)
   // the frontend's signed axis (-128..127) onto the pad's biased byte
   chimera_dolphin_set_axis(index / 6, index % 6, value + 128);
 }
+
+#ifdef CHIMERA_GL_BRIDGE
+ECL_EXPORT void SetGpuBridge(uint64_t addr)
+{
+  chimera_dolphin_install_gpu_bridge(addr);
+}
+#endif
 
 ECL_EXPORT void FrameAdvance(uint64_t /*input*/)
 {

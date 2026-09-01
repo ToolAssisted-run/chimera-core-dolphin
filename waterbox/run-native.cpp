@@ -11,6 +11,17 @@
 
 #include "dolphin-driver.h"
 
+#ifdef CHIMERA_GL_BRIDGE
+extern "C" {
+int chimera_gl_host_init(char* err, int errlen);
+const char* chimera_gl_host_description(void);
+uintptr_t chimera_gl_host_dispatch(uintptr_t op, uintptr_t a, uintptr_t b, uintptr_t c,
+                                   uintptr_t d, uintptr_t e);
+void chimera_dolphin_install_gpu_bridge(uint64_t addr);
+int chimera_dolphin_gpu_bridge_present(void);
+}
+#endif
+
 #include <execinfo.h>
 #include <pthread.h>
 #include <csignal>
@@ -64,6 +75,33 @@ int main(int argc, char** argv)
       savedata_out = argv[++i];
     else if (!strcmp(argv[i], "--cpu-core") && i + 1 < argc)
       chimera_dolphin_set_cpu_core(argv[++i]);
+    else if (!strcmp(argv[i], "--renderer") && i + 1 < argc)
+    {
+      const char* r = argv[++i];
+      chimera_dolphin_set_renderer(r);
+#ifdef CHIMERA_GL_BRIDGE
+      if (!strcmp(r, "opengl"))
+      {
+        // Install BEFORE the host context loads its entry points: in this
+        // single binary the guest install writes wrappers into the shared
+        // glad table, and gladLoadGL afterwards puts the REAL driver
+        // functions back - the host dispatch must call those, or every call
+        // recurses through its own wrapper forever.
+        chimera_dolphin_install_gpu_bridge(
+            (uint64_t)(uintptr_t)&chimera_gl_host_dispatch);
+        char glerr[256] = "";
+        if (chimera_gl_host_init(glerr, sizeof glerr) != 0)
+        {
+          fprintf(stderr, "gpu bridge: no context (%s)\n", glerr);
+        }
+        else
+        {
+          fprintf(stderr, "gpu bridge: %s\n", chimera_gl_host_description());
+          fprintf(stderr, "gpu bridge: installed=%d\n", chimera_dolphin_gpu_bridge_present());
+        }
+      }
+#endif
+    }
     else if (!strcmp(argv[i], "--press") && i + 1 < argc && presses < 32)
     {
       long a, b;

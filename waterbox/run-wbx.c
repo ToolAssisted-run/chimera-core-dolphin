@@ -11,6 +11,13 @@
  * "rom.name" carrying that name, exactly the frontend shape.
  */
 #include "minibox.h"
+#ifdef CHIMERA_GL_BRIDGE
+#include "gl-bridge.h"
+int chimera_gl_host_init(char *err, int errlen);
+const char *chimera_gl_host_description(void);
+uintptr_t chimera_gl_host_dispatch(uintptr_t op, uintptr_t a, uintptr_t b, uintptr_t c,
+                                   uintptr_t d, uintptr_t e);
+#endif
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,6 +58,7 @@ static intptr_t mem_read(uintptr_t ud, uint8_t *d, uintptr_t n)
 typedef int (MB_GUEST_ABI *intfn)(void);
 typedef void (MB_GUEST_ABI *framefn)(uint64_t);
 typedef void (MB_GUEST_ABI *btnfn)(int32_t, int32_t);
+typedef void (MB_GUEST_ABI *setfn_v)(uint64_t);
 typedef uintptr_t (MB_GUEST_ABI *ptrfn)(void);
 typedef uintptr_t (MB_GUEST_ABI *ptrfn_i)(int);
 typedef int64_t (MB_GUEST_ABI *i64fn_i)(int);
@@ -178,6 +186,33 @@ int main(int argc, char **argv)
 	}
 
 	wbx_activate_host(h, &r);
+
+	/* The GPU bridge (see waterbox/gl-bridge.h). Off unless CHIMERA_GPU=1
+	 * asks, and a machine with no usable driver simply keeps the software
+	 * renderer. Handed over BEFORE Init, where the renderer is chosen. */
+#ifdef CHIMERA_GL_BRIDGE
+	{
+		const char *want = getenv("CHIMERA_GPU");
+		if (want && strcmp(want, "0") != 0) {
+			char glerr[256] = "";
+			if (chimera_gl_host_init(glerr, sizeof glerr) != 0) {
+				fprintf(stderr, "gpu bridge: no context (%s); software rendering unaffected\n", glerr);
+			} else {
+				mb_return gr;
+				wbx_get_proc_addr(h, "SetGpuBridge", &gr);
+				setfn_v set_bridge = (setfn_v)gr.data;
+				wbx_get_callback_addr(h, (mb_external_callback)chimera_gl_host_dispatch, 0, &gr);
+				if (!gr.data || !set_bridge) {
+					fprintf(stderr, "gpu bridge: could not register the callback\n");
+				} else {
+					fprintf(stderr, "gpu bridge: %s\n", chimera_gl_host_description());
+					set_bridge((uint64_t)gr.data);
+				}
+			}
+		}
+	}
+#endif
+
 	intfn Init = (intfn)proc(h, "Init");
 	if (Init() != 1) {
 		ptrfn GetLoadError = (ptrfn)proc(h, "GetLoadError");

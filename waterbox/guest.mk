@@ -20,16 +20,27 @@ WBFLAGS := -fvisibility=hidden -mcmodel=large -mstack-protector-guard=global -fn
 SPECS   := -specs $(SR)/lib/musl-gcc.specs
 CXXINCS := -nostdinc++ -I$(SR)/include/c++/$(GCCVER) -I$(SR)/include/c++/$(GCCVER)/x86_64-linux-musl
 MBINCS  := -I$(MB)/extern/emulibc -I$(MB)/source/guest/include -I$(MB)/extern/jsmn
+GLINCS  := -I$(MB)/source/gl -Iglad/include -Igenerated-gl
 
-CXXFLAGS := $(WBFLAGS) $(TUFLAGS) -DCHIMERA_GUEST $(MBINCS) -I. $(CXXINCS)
+CXXFLAGS := $(WBFLAGS) $(TUFLAGS) -DCHIMERA_GUEST -DCHIMERA_GL_BRIDGE $(MBINCS) $(GLINCS) -I. $(CXXINCS)
+CFLAGS   := $(WBFLAGS) -DCHIMERA_GUEST $(GLINCS)
 
-OBJS := $(O)/dolphin-driver.o $(O)/host-stubs.o $(O)/wbx-entry.o $(O)/guest-syscalls.o
+OBJS := $(O)/dolphin-driver.o $(O)/host-stubs.o $(O)/wbx-entry.o $(O)/guest-syscalls.o \
+        $(O)/gl-shim.o $(O)/gl-bridge-guest.o $(O)/glad-gl.o
 
 all: $(OBJS)
 
 $(O)/%.o: %.cpp dolphin-driver.h
 	@mkdir -p $(O)
 	g++ $(SPECS) $(CXXFLAGS) -c -o $@ $<
+
+$(O)/gl-bridge-guest.o: generated-gl/gl-bridge-guest.cpp
+	@mkdir -p $(O)
+	g++ $(SPECS) $(CXXFLAGS) -c -o $@ $<
+
+$(O)/glad-gl.o: glad/src/gl.c
+	@mkdir -p $(O)
+	gcc $(SPECS) $(CFLAGS) -std=gnu11 -c -o $@ $<
 
 clean:
 	rm -rf $(O)

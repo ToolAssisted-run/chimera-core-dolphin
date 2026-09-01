@@ -1,0 +1,31 @@
+diff --git a/Source/Core/Common/GL/GLContext.cpp b/Source/Core/Common/GL/GLContext.cpp
+index eef689616e..bd91fc9331 100644
+--- a/Source/Core/Common/GL/GLContext.cpp
++++ b/Source/Core/Common/GL/GLContext.cpp
+@@ -75,10 +75,26 @@ void* GLContext::GetFuncAddress(const std::string& name)
+   return nullptr;
+ }
+ 
++// A host embedding the core may own the GL context itself (a bridge to a GPU
++// the machine cannot see); the weak symbol is null in every other build.
++extern "C" GLContext* Chimera_CreateGLContext() __attribute__((weak));
++
+ std::unique_ptr<GLContext> GLContext::Create(const WindowSystemInfo& wsi, bool stereo, bool core,
+                                              bool prefer_gles)
+ {
+   std::unique_ptr<GLContext> context;
++  if (Chimera_CreateGLContext)
++  {
++    context.reset(Chimera_CreateGLContext());
++    if (context)
++    {
++      if (!context->Initialize(wsi, stereo, core))
++        return nullptr;
++      return context;
++    }
++    // null from the hook means "no bridge today": fall through to the
++    // platform paths, exactly as a build without the hook would.
++  }
+ #if defined(__APPLE__)
+   if (wsi.type == WindowSystemType::MacOS || wsi.type == WindowSystemType::Headless)
+     context = std::make_unique<GLContextAGL>();

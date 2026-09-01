@@ -36,6 +36,13 @@ sr="$mbuild/guest-sysroot"
 	exit 1
 }
 
+# the guest half of the GPU bridge, generated from miniBox's master list for
+# exactly the names dolphin can ask for (see gl-entry-points.txt)
+mkdir -p "$here/generated-gl"
+python3 "$mb/source/gl/gen-gl-bridge.py" "$here/glad/include/glad/gl.h" \
+	"$mb/source/gl/gl-entry-points.txt" "$here/generated-gl" \
+	--only "$here/gl-entry-points.txt"
+
 make -f "$here/guest.mk" -C "$here" -j"$jobs" MB="$mb"
 
 mkdir -p "$out"
@@ -49,6 +56,7 @@ g++ -specs "$sr/lib/musl-gcc.specs" -mcmodel=large -fno-pic -fno-pie \
 	-o "$out/core.wbx" \
 	"$here"/obj-guest/wbx-entry.o "$here"/obj-guest/dolphin-driver.o \
 	"$here"/obj-guest/host-stubs.o "$here"/obj-guest/guest-syscalls.o \
+	"$here"/obj-guest/gl-shim.o "$here"/obj-guest/gl-bridge-guest.o "$here"/obj-guest/glad-gl.o \
 	"$mbuild/source/guest/cxxglue.c.o" "$mbuild/source/guest/emulibc.c.o" \
 	-Wl,--start-group $libs -Wl,--end-group \
 	-L"$sr/lib" -lstdc++ -lgcc -lgcc_eh -lc
@@ -58,6 +66,8 @@ echo "built $out/core.wbx"
 # host driver for the gate
 mblinux="$mb/build/meson-linux"
 [ -f "$mblinux/source/host/libminiboxhost.so" ] || mblinux="$mbuild"
-gcc -O2 -Wall -I"$mb/source/host" -o "$out/run-wbx" "$here/run-wbx.c" \
-	"$mblinux/source/host/libminiboxhost.so" -Wl,-rpath,"$mblinux/source/host"
+gcc -O2 -Wall -DCHIMERA_GL_BRIDGE -I"$mb/source/host" -I"$mb/source/gl" \
+	-I"$here/glad/include" -I"$here/generated-gl" \
+	-o "$out/run-wbx" "$here/run-wbx.c" "$here/gl-host.c" "$here/glad/src/gl.c" \
+	"$mblinux/source/host/libminiboxhost.so" -Wl,-rpath,"$mblinux/source/host" -lEGL
 echo "built $out/run-wbx"

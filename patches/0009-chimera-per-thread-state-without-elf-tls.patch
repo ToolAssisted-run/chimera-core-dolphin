@@ -84,6 +84,48 @@ index 9ecb6bcc1c..ae754c49cb 100644
  }
 +#endif
  }  // namespace Common::Random
+diff --git a/Source/Core/Core/Core.cpp b/Source/Core/Core/Core.cpp
+index 8ce66e67bb..1efdf2af70 100644
+--- a/Source/Core/Core/Core.cpp
++++ b/Source/Core/Core/Core.cpp
+@@ -30,6 +30,9 @@
+ #include "Common/FileUtil.h"
+ #include "Common/Logging/Log.h"
+ #include "Common/MsgHandler.h"
++#ifdef CHIMERA_NO_TLS
++#include "Common/SandboxTls.h"
++#endif
+ #include "Common/OneShotEvent.h"
+ #include "Common/ScopeGuard.h"
+ #include "Common/StringUtil.h"
+@@ -126,8 +129,13 @@ struct HostJob
+ static std::mutex s_host_jobs_lock;
+ static std::queue<HostJob> s_host_jobs_queue;
+ 
++#ifdef CHIMERA_NO_TLS
++static ::Common::SandboxTlsValue<bool> tls_is_cpu_thread;
++static ::Common::SandboxTlsValue<bool> tls_is_gpu_thread;
++#else
+ static thread_local bool tls_is_cpu_thread = false;
+ static thread_local bool tls_is_gpu_thread = false;
++#endif
+ 
+ static void EmuThread(Core::System& system, std::unique_ptr<BootParameters> boot,
+                       WindowSystemInfo wsi);
+@@ -333,7 +341,12 @@ static void CpuThread(Core::System& system, const std::optional<std::string>& sa
+   system.GetPerfMetrics().Reset();
+ 
+   // The JIT need to be able to intercept faults, both for fastmem and for the BLR optimization.
+-  const bool exception_handler = EMM::IsExceptionHandlerSupported();
++  // The interpreters never fault on purpose - and a host without signal
++  // machinery (the sandbox) can boot them without any handler at all.
++  const PowerPC::CPUCore cpu_core = Config::Get(Config::MAIN_CPU_CORE);
++  const bool wants_fault_interception =
++      cpu_core != PowerPC::CPUCore::Interpreter && cpu_core != PowerPC::CPUCore::CachedInterpreter;
++  const bool exception_handler = wants_fault_interception && EMM::IsExceptionHandlerSupported();
+   if (exception_handler)
+     EMM::InstallExceptionHandler();
+ 
 diff --git a/Source/Core/InputCommon/ControlReference/ControlReference.cpp b/Source/Core/InputCommon/ControlReference/ControlReference.cpp
 index 795204cc05..485c0b91d7 100644
 --- a/Source/Core/InputCommon/ControlReference/ControlReference.cpp
@@ -150,31 +192,29 @@ index 20fd517b2d..574ae6913b 100644
  
  void ControllerInterface::Initialize(const WindowSystemInfo& wsi)
  {
-diff --git a/Source/Core/Core/Core.cpp b/Source/Core/Core/Core.cpp
-index 8ce66e67bb..1efdf2af70 100644
---- a/Source/Core/Core/Core.cpp
-+++ b/Source/Core/Core/Core.cpp
-@@ -30,6 +30,9 @@
- #include "Common/FileUtil.h"
- #include "Common/Logging/Log.h"
- #include "Common/MsgHandler.h"
+diff --git a/Source/Core/VideoBackends/OGL/ProgramShaderCache.cpp b/Source/Core/VideoBackends/OGL/ProgramShaderCache.cpp
+index 1dfd026810..a07b10a2ec 100644
+--- a/Source/Core/VideoBackends/OGL/ProgramShaderCache.cpp
++++ b/Source/Core/VideoBackends/OGL/ProgramShaderCache.cpp
+@@ -2,6 +2,9 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ #include "VideoBackends/OGL/ProgramShaderCache.h"
 +#ifdef CHIMERA_NO_TLS
 +#include "Common/SandboxTls.h"
 +#endif
- #include "Common/OneShotEvent.h"
- #include "Common/ScopeGuard.h"
- #include "Common/StringUtil.h"
-@@ -126,8 +129,13 @@ struct HostJob
- static std::mutex s_host_jobs_lock;
- static std::queue<HostJob> s_host_jobs_queue;
  
+ #include <array>
+ #include <atomic>
+@@ -53,7 +56,11 @@ ProgramShaderCache::PipelineProgramMap ProgramShaderCache::s_pipeline_programs;
+ std::mutex ProgramShaderCache::s_pipeline_program_lock;
+ static std::string s_glsl_header;
+ static std::atomic<u64> s_shader_counter{0};
 +#ifdef CHIMERA_NO_TLS
-+static ::Common::SandboxTlsValue<bool> tls_is_cpu_thread;
-+static ::Common::SandboxTlsValue<bool> tls_is_gpu_thread;
++static ::Common::SandboxTlsValue<bool> s_is_shared_context;
 +#else
- static thread_local bool tls_is_cpu_thread = false;
- static thread_local bool tls_is_gpu_thread = false;
+ static thread_local bool s_is_shared_context = false;
 +#endif
  
- static void EmuThread(Core::System& system, std::unique_ptr<BootParameters> boot,
-                       WindowSystemInfo wsi);
+ static std::string GetGLSLVersionString()
+ {
