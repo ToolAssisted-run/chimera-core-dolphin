@@ -66,6 +66,9 @@ ECL_EXPORT int Init(void)
   }
 
   chimera_dolphin_set_memcard_a(wbx_setting_bool("memcard_a", 1));
+  char cpuCore[32] = "jit";
+  wbx_setting_str("cpu_core", cpuCore, sizeof cpuCore);
+  chimera_dolphin_set_cpu_core(cpuCore);
 
   if (!chimera_dolphin_init("/user", "/sys", romName))
   {

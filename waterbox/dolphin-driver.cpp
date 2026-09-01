@@ -6,6 +6,8 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
+#include <cstring>
 #include <string>
 #include <thread>
 
@@ -49,6 +51,7 @@ struct PadWire
 static PadWire s_pad[4];
 static bool s_input_read;
 static bool s_memcard_a = true;
+static PowerPC::CPUCore s_cpu_core = PowerPC::CPUCore::JIT64;
 
 static constexpr uint16_t kWireBit[12] = {
     PAD_BUTTON_A,    PAD_BUTTON_B,    PAD_BUTTON_X,    PAD_BUTTON_Y,
@@ -175,8 +178,13 @@ public:
   ChimeraConfigLayer() : ConfigLayerLoader(Config::LayerType::CurrentRun) {}
   void Load(Config::Layer* layer) override
   {
-    layer->Set(Config::MAIN_CPU_CORE, PowerPC::CPUCore::Interpreter);
+    layer->Set(Config::MAIN_CPU_CORE, s_cpu_core);
     layer->Set(Config::MAIN_CPU_THREAD, false);
+    // nothing may fault on purpose: no fastmem, no arena mirrors, in either
+    // flavor (build option ENABLE_FAULT_OPTIMIZATIONS=OFF removes the
+    // handler; these remove the askers)
+    layer->Set(Config::MAIN_FASTMEM, false);
+    layer->Set(Config::MAIN_FASTMEM_ARENA, false);
     layer->Set(Config::MAIN_GFX_BACKEND, std::string("Software Renderer"));
     layer->Set(Config::MAIN_DSP_HLE, true);
     layer->Set(Config::MAIN_DSP_JIT, false);
@@ -214,8 +222,20 @@ static bool WaitForState(Core::State want)
   for (;;)
   {
     const Core::State got = Core::GetState(Sys());
-    if (getenv("CHIMERA_TRACE_STATE") && ++spins % 100000 == 0)
+    spins++;
+    if (getenv("CHIMERA_TRACE_STATE") && spins % 100000 == 0)
       fprintf(stderr, "[state] want %d got %d\n", int(want), int(got));
+#ifndef CHIMERA_GUEST
+    // Natively the pump would otherwise spin a whole core on sched_yield
+    // against real threads; a short sleep after a polite start costs at most
+    // 100us of latency per frame. The guest's yield IS its scheduler and
+    // must stay untouched.
+    if (spins > 200)
+    {
+      timespec ts{0, 100000};
+      nanosleep(&ts, nullptr);
+    }
+#endif
     if (got == want)
       return true;
     if (got == Core::State::Uninitialized && want != Core::State::Uninitialized)
@@ -416,6 +436,18 @@ const char* chimera_dolphin_domain_name(int i)
 void chimera_dolphin_set_memcard_a(int present)
 {
   s_memcard_a = present != 0;
+}
+
+void chimera_dolphin_set_cpu_core(const char* name)
+{
+  if (!name)
+    return;
+  if (strcmp(name, "cached-interpreter") == 0)
+    s_cpu_core = PowerPC::CPUCore::CachedInterpreter;
+  else if (strcmp(name, "jit") == 0)
+    s_cpu_core = PowerPC::CPUCore::JIT64;
+  else
+    s_cpu_core = PowerPC::CPUCore::Interpreter;
 }
 
 int chimera_dolphin_savedata_count(void)

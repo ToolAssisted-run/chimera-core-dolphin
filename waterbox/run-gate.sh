@@ -58,6 +58,22 @@ fi
 if grep -q "lag 0$" "$work/n1.txt"; then PASS "lag leg - the machine polls the pad every frame"
 else FAIL "lag leg - unpolled frames counted"; fi
 
+# ---- the other cpu cores: each deterministic and flavor-equal --------------
+# The default (jit) is what every leg above ran; each alternative is a
+# DIFFERENT machine (instruction- vs block-granular timing), so each is
+# proven on its own: native == sandbox, and a save+load round trip per
+# frame changes nothing.
+for core in interpreter cached-interpreter; do
+	nat "cc-$core" --cpu-core "$core" --frames 120 --report 1 "$swiss" > "$work/cc-n.txt"
+	wbx --settings "{\"cpu_core\":\"$core\"}" --frames 120 --report 1 "$swiss" > "$work/cc-g.txt"
+	if cmp -s "$work/cc-n.txt" "$work/cc-g.txt"; then PASS "cpu core '$core' - native == sandbox at 120 frames"
+	else FAIL "cpu core '$core' - flavors differ"; fi
+	wbx --settings "{\"cpu_core\":\"$core\"}" --frames 60 --report 1 --rerecord "$swiss" > "$work/cc-rr.txt"
+	wbx --settings "{\"cpu_core\":\"$core\"}" --frames 60 --report 1 "$swiss" > "$work/cc-pl.txt"
+	if [ -s "$work/cc-pl.txt" ] && cmp -s "$work/cc-rr.txt" "$work/cc-pl.txt"; then PASS "cpu core '$core' - rerecord changes nothing"
+	else FAIL "cpu core '$core' - rerecord leg"; fi
+done
+
 # ---- tier 2: a commercial disc --------------------------------------------
 if [ -f "$disc" ]; then
 	nat d1 --frames "$frames" --report 1 "$disc" > "$work/d1.txt"

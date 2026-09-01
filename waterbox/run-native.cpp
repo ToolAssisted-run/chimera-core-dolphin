@@ -62,6 +62,8 @@ int main(int argc, char** argv)
       ram_out = argv[++i];
     else if (!strcmp(argv[i], "--savedata-out") && i + 1 < argc)
       savedata_out = argv[++i];
+    else if (!strcmp(argv[i], "--cpu-core") && i + 1 < argc)
+      chimera_dolphin_set_cpu_core(argv[++i]);
     else if (!strcmp(argv[i], "--press") && i + 1 < argc && presses < 32)
     {
       long a, b;
