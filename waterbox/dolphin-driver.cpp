@@ -24,6 +24,7 @@
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/System.h"
 #include "AudioCommon/AudioCommon.h"
+#include "VideoCommon/VideoBackendBase.h"
 #include "UICommon/UICommon.h"
 
 #include "dolphin-driver.h"
@@ -131,6 +132,8 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
     s_error = "the machine tore down during boot (see log)";
     return 0;
   }
+  fprintf(stderr, "[driver] video backend: %s\n",
+          g_video_backend ? g_video_backend->GetConfigName().c_str() : "(none)");
   return 1;
 }
 
@@ -141,6 +144,13 @@ void chimera_dolphin_frame(void)
   // call cannot race the step.
   Core::DoFrameStep(Sys());
   WaitForState(Core::State::Paused);
+  // The state flag flips to Paused before the CPU thread has fully settled;
+  // natively it can still be mid-slice while the harness reads memory. A
+  // CPUThreadGuard blocks until the machine is genuinely quiet - the same
+  // point the frozen-threads sandbox observes for free.
+  {
+    const Core::CPUThreadGuard guard(Sys());
+  }
 }
 
 uint8_t* chimera_dolphin_ram_ptr(void)

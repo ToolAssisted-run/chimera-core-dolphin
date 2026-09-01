@@ -1,5 +1,5 @@
 diff --git a/Source/Core/Common/FileUtil.cpp b/Source/Core/Common/FileUtil.cpp
-index 053614f31f..0230fe1c4a 100644
+index 053614f31f..e8d7f2040e 100644
 --- a/Source/Core/Common/FileUtil.cpp
 +++ b/Source/Core/Common/FileUtil.cpp
 @@ -18,9 +18,7 @@
@@ -22,7 +22,7 @@ index 053614f31f..0230fe1c4a 100644
  static std::string s_android_driver_directory;
  static std::string s_android_lib_directory;
  #endif
-@@ -771,11 +769,13 @@ static std::string CreateSysDirectoryPath()
+@@ -771,14 +769,21 @@ static std::string CreateSysDirectoryPath()
  #if defined(__APPLE__)
    sys_directory = GetBundleDirectory() + DIR_SEP SYSDATA_DIR DIR_SEP;
  #elif defined ANDROID
@@ -31,15 +31,26 @@ index 053614f31f..0230fe1c4a 100644
 +  sys_directory = s_sys_directory_override + DIR_SEP;
 +  ASSERT_MSG(COMMON, !s_sys_directory_override.empty(), "Sys directory has not been set");
  #else
-   const std::string local_sys_directory = GetExeDirectory() + DIR_SEP SYS_FOLDER_NAME DIR_SEP;
+-  const std::string local_sys_directory = GetExeDirectory() + DIR_SEP SYS_FOLDER_NAME DIR_SEP;
 -  if (IsDirectory(local_sys_directory))
+-    sys_directory = local_sys_directory;
 +  if (!s_sys_directory_override.empty())
++  {
 +    sys_directory = s_sys_directory_override + DIR_SEP;
-+  else if (IsDirectory(local_sys_directory))
-     sys_directory = local_sys_directory;
++  }
    else
-     sys_directory = SYSDATA_DIR DIR_SEP;
-@@ -792,15 +792,16 @@ const std::string& GetSysDirectory()
+-    sys_directory = SYSDATA_DIR DIR_SEP;
++  {
++    const std::string local_sys_directory = GetExeDirectory() + DIR_SEP SYS_FOLDER_NAME DIR_SEP;
++    if (IsDirectory(local_sys_directory))
++      sys_directory = local_sys_directory;
++    else
++      sys_directory = SYSDATA_DIR DIR_SEP;
++  }
+ 
+ #endif
+ 
+@@ -792,15 +797,16 @@ const std::string& GetSysDirectory()
    return sys_directory;
  }
  

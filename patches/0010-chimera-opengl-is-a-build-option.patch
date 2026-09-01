@@ -1,0 +1,39 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8f62d7f847..9cf2e61222 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -641,7 +641,8 @@ if(ENABLE_VULKAN)
+   endif()
+ endif()
+ 
+-if(NOT (WIN32 AND _M_ARM_64))
++option(ENABLE_OPENGL "Enables the OpenGL video backend" ON)
++if(ENABLE_OPENGL AND NOT (WIN32 AND _M_ARM_64))
+   # OpenGL is available on all platforms except windows-arm64
+   add_definitions(-DHAS_OPENGL)
+ endif()
+diff --git a/Source/Core/Core/CMakeLists.txt b/Source/Core/Core/CMakeLists.txt
+index 56c8dba3de..212080d593 100644
+--- a/Source/Core/Core/CMakeLists.txt
++++ b/Source/Core/Core/CMakeLists.txt
+@@ -693,7 +693,7 @@ PUBLIC
+   pugixml
+   sfml-network
+   videonull
+-  videoogl
++  "$<$<BOOL:${ENABLE_OPENGL}>:videoogl>"
+   videosoftware
+ 
+ PRIVATE
+diff --git a/Source/Core/VideoBackends/CMakeLists.txt b/Source/Core/VideoBackends/CMakeLists.txt
+index 9d20d6d2b5..88a7171500 100644
+--- a/Source/Core/VideoBackends/CMakeLists.txt
++++ b/Source/Core/VideoBackends/CMakeLists.txt
+@@ -1,4 +1,6 @@
+-add_subdirectory(OGL)
++if(ENABLE_OPENGL)
++  add_subdirectory(OGL)
++endif()
+ add_subdirectory(Null)
+ add_subdirectory(Software)
+ 

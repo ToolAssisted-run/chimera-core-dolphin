@@ -1,70 +1,145 @@
-diff --git a/Source/Core/Common/SandboxTls.h b/Source/Core/Common/SandboxTls.h
-new file mode 100644
-index 0000000000..da015e1944
---- /dev/null
-+++ b/Source/Core/Common/SandboxTls.h
-@@ -0,0 +1,31 @@
-+// Copyright 2026 Dolphin Emulator Project
-+// SPDX-License-Identifier: GPL-2.0-or-later
-+
-+// For hosts without ELF TLS (CHIMERA_NO_TLS): a pthread key wearing a value's
-+// clothes. Zero-initialized per thread, like the thread_local it replaces.
-+#pragma once
-+
-+#include <pthread.h>
-+#include <cstdint>
-+
-+namespace Common
-+{
-+template <typename T>
-+class SandboxTlsValue
-+{
-+public:
-+  SandboxTlsValue() { pthread_key_create(&m_key, nullptr); }
-+  SandboxTlsValue& operator=(T v)
-+  {
-+    pthread_setspecific(m_key, reinterpret_cast<void*>(static_cast<uintptr_t>(v)));
-+    return *this;
-+  }
-+  operator T() const
-+  {
-+    return static_cast<T>(reinterpret_cast<uintptr_t>(pthread_getspecific(m_key)));
-+  }
-+
-+private:
-+  pthread_key_t m_key;
-+};
-+}  // namespace Common
-diff --git a/Source/Core/Core/Core.cpp b/Source/Core/Core/Core.cpp
-index 8ce66e67bb..4879ffa38f 100644
---- a/Source/Core/Core/Core.cpp
-+++ b/Source/Core/Core/Core.cpp
-@@ -126,8 +126,14 @@ struct HostJob
- static std::mutex s_host_jobs_lock;
- static std::queue<HostJob> s_host_jobs_queue;
- 
+diff --git a/Source/Core/Common/MemoryUtil.cpp b/Source/Core/Common/MemoryUtil.cpp
+index 0d66890d2b..25a7120258 100644
+--- a/Source/Core/Common/MemoryUtil.cpp
++++ b/Source/Core/Common/MemoryUtil.cpp
+@@ -60,7 +60,12 @@ void* AllocateExecutableMemory(size_t size)
+ // The variable is thread_local as the W^X mode is specific to each running thread.
+ static int& JITPageWriteNestCounter()
+ {
 +#ifdef CHIMERA_NO_TLS
-+#include "Common/SandboxTls.h"
-+static Common::SandboxTlsValue<bool> tls_is_cpu_thread;
-+static Common::SandboxTlsValue<bool> tls_is_gpu_thread;
++  // No ELF TLS in the sandbox; W^X nesting only matters on Apple ARM anyway.
++  static int nest_counter = 0;
 +#else
- static thread_local bool tls_is_cpu_thread = false;
- static thread_local bool tls_is_gpu_thread = false;
+   static thread_local int nest_counter = 0;
++#endif
+   return nest_counter;
+ }
+ 
+diff --git a/Source/Core/Common/Network.cpp b/Source/Core/Common/Network.cpp
+index 90dcd7017f..0d4805ed01 100644
+--- a/Source/Core/Common/Network.cpp
++++ b/Source/Core/Common/Network.cpp
+@@ -777,7 +777,11 @@ void RestoreNetworkErrorState(const NetworkErrorState& state)
+ 
+ const char* DecodeNetworkError(s32 error_code)
+ {
++#ifdef CHIMERA_NO_TLS
++  static char buffer[1024];
++#else
+   thread_local char buffer[1024];
 +#endif
  
- static void EmuThread(Core::System& system, std::unique_ptr<BootParameters> boot,
-                       WindowSystemInfo wsi);
+ #ifdef _WIN32
+   FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS |
+diff --git a/Source/Core/Common/Random.cpp b/Source/Core/Common/Random.cpp
+index 9ecb6bcc1c..ae754c49cb 100644
+--- a/Source/Core/Common/Random.cpp
++++ b/Source/Core/Common/Random.cpp
+@@ -1,6 +1,8 @@
+ // Copyright 2018 Dolphin Emulator Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
++#include <mutex>
++
+ #include "Common/Random.h"
+ 
+ #include <mbedtls/entropy.h>
+@@ -18,8 +20,16 @@ public:
+   {
+     mbedtls_entropy_init(&m_entropy);
+     mbedtls_hmac_drbg_init(&m_context);
++#ifdef CHIMERA_NO_TLS
++    // The sandbox has no entropy source, and a reproducible machine would
++    // not want one: a fixed seed makes every draw part of the recording.
++    static constexpr u8 seed[] = "chimera-fixed-prng-seed";
++    const int ret = mbedtls_hmac_drbg_seed_buf(
++        &m_context, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), seed, sizeof(seed));
++#else
+     const int ret = mbedtls_hmac_drbg_seed(&m_context, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
+                                            mbedtls_entropy_func, &m_entropy, nullptr, 0);
++#endif
+     ASSERT(ret == 0);
+   }
+ 
+@@ -40,10 +50,22 @@ private:
+   mbedtls_hmac_drbg_context m_context;
+ };
+ 
++#ifdef CHIMERA_NO_TLS
++// No ELF TLS in the sandbox: one PRNG behind a lock serves every thread.
++static EntropySeededPRNG s_esprng;
++static std::mutex s_esprng_lock;
++
++void Generate(void* buffer, std::size_t size)
++{
++  std::lock_guard lock(s_esprng_lock);
++  s_esprng.Generate(buffer, size);
++}
++#else
+ static thread_local EntropySeededPRNG s_esprng;
+ 
+ void Generate(void* buffer, std::size_t size)
+ {
+   s_esprng.Generate(buffer, size);
+ }
++#endif
+ }  // namespace Common::Random
+diff --git a/Source/Core/InputCommon/ControlReference/ControlReference.cpp b/Source/Core/InputCommon/ControlReference/ControlReference.cpp
+index 795204cc05..485c0b91d7 100644
+--- a/Source/Core/InputCommon/ControlReference/ControlReference.cpp
++++ b/Source/Core/InputCommon/ControlReference/ControlReference.cpp
+@@ -5,16 +5,31 @@
+ 
+ using namespace ciface::ExpressionParser;
+ 
++#ifdef CHIMERA_NO_TLS
++// No ELF TLS in the sandbox. The key's zero default must mean the gate's
++// default, which is OPEN - so the stored bit is "gate closed".
++#include "Common/SandboxTls.h"
++static Common::SandboxTlsValue<bool> tls_input_gate_closed;
++#else
+ static thread_local bool tls_input_gate = true;
++#endif
+ 
+ void ControlReference::SetInputGate(bool enable)
+ {
++#ifdef CHIMERA_NO_TLS
++  tls_input_gate_closed = !enable;
++#else
+   tls_input_gate = enable;
++#endif
+ }
+ 
+ bool ControlReference::GetInputGate()
+ {
++#ifdef CHIMERA_NO_TLS
++  return !tls_input_gate_closed;
++#else
+   return tls_input_gate;
++#endif
+ }
+ 
+ //
 diff --git a/Source/Core/InputCommon/ControllerInterface/ControllerInterface.cpp b/Source/Core/InputCommon/ControllerInterface/ControllerInterface.cpp
-index 20fd517b2d..9d7087c06c 100644
+index 20fd517b2d..574ae6913b 100644
 --- a/Source/Core/InputCommon/ControllerInterface/ControllerInterface.cpp
 +++ b/Source/Core/InputCommon/ControllerInterface/ControllerInterface.cpp
-@@ -43,9 +43,15 @@ ControllerInterface g_controller_interface;
+@@ -2,6 +2,9 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ #include "InputCommon/ControllerInterface/ControllerInterface.h"
++#ifdef CHIMERA_NO_TLS
++#include "Common/SandboxTls.h"
++#endif
+ 
+ #include <algorithm>
+ 
+@@ -43,9 +46,14 @@ ControllerInterface g_controller_interface;
  // update values in different threads by input channel. We start from InputChannel::Host on all
  // threads as hotkeys are updated from a worker thread, but UI can read from the main thread. This
  // will never interfere with game threads.
 -static thread_local ciface::InputChannel tls_input_channel = ciface::InputChannel::Host;
 +#ifdef CHIMERA_NO_TLS
-+#include "Common/SandboxTls.h"
 +static Common::SandboxTlsValue<ciface::InputChannel> tls_input_channel;
  
 +static Common::SandboxTlsValue<bool> tls_is_updating_devices;
@@ -75,3 +150,31 @@ index 20fd517b2d..9d7087c06c 100644
  
  void ControllerInterface::Initialize(const WindowSystemInfo& wsi)
  {
+diff --git a/Source/Core/Core/Core.cpp b/Source/Core/Core/Core.cpp
+index 8ce66e67bb..1efdf2af70 100644
+--- a/Source/Core/Core/Core.cpp
++++ b/Source/Core/Core/Core.cpp
+@@ -30,6 +30,9 @@
+ #include "Common/FileUtil.h"
+ #include "Common/Logging/Log.h"
+ #include "Common/MsgHandler.h"
++#ifdef CHIMERA_NO_TLS
++#include "Common/SandboxTls.h"
++#endif
+ #include "Common/OneShotEvent.h"
+ #include "Common/ScopeGuard.h"
+ #include "Common/StringUtil.h"
+@@ -126,8 +129,13 @@ struct HostJob
+ static std::mutex s_host_jobs_lock;
+ static std::queue<HostJob> s_host_jobs_queue;
+ 
++#ifdef CHIMERA_NO_TLS
++static ::Common::SandboxTlsValue<bool> tls_is_cpu_thread;
++static ::Common::SandboxTlsValue<bool> tls_is_gpu_thread;
++#else
+ static thread_local bool tls_is_cpu_thread = false;
+ static thread_local bool tls_is_gpu_thread = false;
++#endif
+ 
+ static void EmuThread(Core::System& system, std::unique_ptr<BootParameters> boot,
+                       WindowSystemInfo wsi);

@@ -52,3 +52,30 @@ index 66c96f5a16..126343c23d 100644
  
    Clipper::Init();
    Rasterizer::Init();
+diff --git a/Source/Core/VideoCommon/VideoBackendBase.cpp b/Source/Core/VideoCommon/VideoBackendBase.cpp
+index 7eeefb7187..b0ac766b5b 100644
+--- a/Source/Core/VideoCommon/VideoBackendBase.cpp
++++ b/Source/Core/VideoCommon/VideoBackendBase.cpp
+@@ -31,9 +31,9 @@
+ #include "VideoBackends/D3D12/VideoBackend.h"
+ #endif
+ #include "VideoBackends/Null/VideoBackend.h"
++#include "VideoBackends/Software/VideoBackend.h"
+ #ifdef HAS_OPENGL
+ #include "VideoBackends/OGL/VideoBackend.h"
+-#include "VideoBackends/Software/VideoBackend.h"
+ #endif
+ #ifdef HAS_VULKAN
+ #include "VideoBackends/Vulkan/VideoBackend.h"
+@@ -223,9 +223,9 @@ const std::vector<std::unique_ptr<VideoBackendBase>>& VideoBackendBase::GetAvail
+ #ifdef __APPLE__
+     backends.emplace(backends.begin(), std::make_unique<Metal::VideoBackend>());
+ #endif
+-#ifdef HAS_OPENGL
++    // The software renderer rasterizes without any GL; only its optional
++    // presentation window ever needed one.
+     backends.push_back(std::make_unique<SW::VideoSoftware>());
+-#endif
+     backends.push_back(std::make_unique<Null::VideoBackend>());
+ 
+     if (!backends.empty())

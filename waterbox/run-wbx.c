@@ -120,7 +120,9 @@ int main(int argc, char **argv)
 	base = base ? base + 1 : game;
 	char vfsname[512];
 	snprintf(vfsname, sizeof vfsname, "/%s", base);
-	if (mountFile(h, vfsname, game) != 0) return 1;
+	/* zero-copy: a disc is gigabytes and the guest reads it lazily */
+	wbx_mount_file_path(h, vfsname, game, &r);
+	if (r.error_message[0]) { fprintf(stderr, "mount %s: %s\n", vfsname, r.error_message); return 1; }
 	memreader nr = { (const uint8_t *)vfsname, strlen(vfsname), 0 };
 	wbx_mount_file(h, "rom.name", mem_reader, (uintptr_t)&nr, false, &r);
 	if (r.error_message[0]) { fprintf(stderr, "mount rom.name: %s\n", r.error_message); return 1; }

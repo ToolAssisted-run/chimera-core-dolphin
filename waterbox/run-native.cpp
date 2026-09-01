@@ -68,6 +68,13 @@ int main(int argc, char** argv)
              fnv(chimera_dolphin_ram_ptr(), chimera_dolphin_ram_size()));
       fflush(stdout);
     }
+    const char* snapf = getenv("CHIMERA_SNAP_FRAME");
+    if (snapf && atol(snapf) == f)
+    {
+      FILE* sf = fopen(getenv("CHIMERA_SNAP_OUT"), "wb");
+      fwrite(chimera_dolphin_ram_ptr(), 1, chimera_dolphin_ram_size(), sf);
+      fclose(sf);
+    }
   }
   if (ram_out)
   {

@@ -5,6 +5,8 @@
 // SPDX-License-Identifier: MIT
 #include <cerrno>
 #include <cstring>
+#include <pthread.h>
+#include <sched.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -39,6 +41,37 @@ int chmod(const char*, mode_t)
 {
   errno = EROFS;
   return -1;
+}
+
+// std::thread::hardware_concurrency goes through here; the box is one CPU
+// and saying so keeps every pool deterministic.
+int sched_getaffinity(pid_t, size_t cpusetsize, cpu_set_t* mask)
+{
+  if (!mask || cpusetsize < sizeof(unsigned long))
+  {
+    errno = EINVAL;
+    return -1;
+  }
+  memset(mask, 0, cpusetsize);
+  CPU_SET(0, mask);
+  return 0;
+}
+
+// musl defines all four affinity functions in one object; shadowing one
+// means providing all of them.
+int sched_setaffinity(pid_t, size_t, const cpu_set_t*)
+{
+  return 0;
+}
+
+int pthread_setaffinity_np(pthread_t, size_t, const cpu_set_t*)
+{
+  return 0;
+}
+
+int pthread_getaffinity_np(pthread_t, size_t cpusetsize, cpu_set_t* mask)
+{
+  return sched_getaffinity(0, cpusetsize, mask);
 }
 
 char* getcwd(char* buf, size_t size)
