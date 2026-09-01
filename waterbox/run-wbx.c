@@ -54,6 +54,7 @@ typedef void (MB_GUEST_ABI *btnfn)(int32_t, int32_t);
 typedef uintptr_t (MB_GUEST_ABI *ptrfn)(void);
 typedef uintptr_t (MB_GUEST_ABI *ptrfn_i)(int);
 typedef int64_t (MB_GUEST_ABI *i64fn_i)(int);
+typedef int32_t (MB_GUEST_ABI *i32fn)(void);
 
 static uintptr_t proc(mb_host *h, const char *n)
 {
@@ -101,7 +102,8 @@ static int mountTree(mb_host *h, const char *guestPrefix, const char *hostDir)
 
 int main(int argc, char **argv)
 {
-	const char *core = NULL, *game = NULL, *sysdir = NULL, *ramOut = NULL;
+	const char *core = NULL, *game = NULL, *sysdir = NULL, *ramOut = NULL, *savedataOut = NULL;
+	const char *saves[8]; int nsaves = 0;
 	long frames = 60, report = 10;
 	int rewind = 0, rerecord = 0;
 	struct { long first, count; int index; } press[32];
@@ -111,6 +113,8 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--report") && i + 1 < argc) report = atol(argv[++i]);
 		else if (!strcmp(argv[i], "--sys") && i + 1 < argc) sysdir = argv[++i];
 		else if (!strcmp(argv[i], "--ram-out") && i + 1 < argc) ramOut = argv[++i];
+		else if (!strcmp(argv[i], "--savedata-out") && i + 1 < argc) savedataOut = argv[++i];
+		else if (!strcmp(argv[i], "--save") && i + 1 < argc && nsaves < 8) saves[nsaves++] = argv[++i];
 		else if (!strcmp(argv[i], "--rewind")) rewind = 1;
 		else if (!strcmp(argv[i], "--rerecord")) rerecord = 1;
 		else if (!strcmp(argv[i], "--press") && i + 1 < argc && presses < 32) {
@@ -153,6 +157,16 @@ int main(int argc, char **argv)
 	if (r.error_message[0]) { fprintf(stderr, "mount rom.name: %s\n", r.error_message); return 1; }
 
 	if (mountTree(h, "/sys", sysdir) != 0) return 1;
+
+	/* prior saves, mounted at exactly the path the machine opens */
+	for (int i = 0; i < nsaves; i++) {
+		char id[256]; const char *eq = strchr(saves[i], '=');
+		if (!eq || eq == saves[i] || (size_t)(eq - saves[i]) >= sizeof id - 10) { fprintf(stderr, "bad --save %s (want name=path)\n", saves[i]); return 2; }
+		char gp[300];
+		memcpy(id, saves[i], eq - saves[i]); id[eq - saves[i]] = 0;
+		snprintf(gp, sizeof gp, "savedata/%s", id);
+		if (mountFile(h, gp, eq + 1) != 0) return 1;
+	}
 
 	wbx_activate_host(h, &r);
 	intfn Init = (intfn)proc(h, "Init");
@@ -236,6 +250,21 @@ int main(int argc, char **argv)
 		FILE *rf2 = fopen(ramOut, "wb");
 		fwrite(ram, 1, (size_t)ramSize, rf2);
 		fclose(rf2);
+	}
+	if (savedataOut) {
+		i32fn SdCount = (i32fn)proc(h, "GetSaveDataFileCount");
+		ptrfn_i SdName = (ptrfn_i)proc(h, "GetSaveDataFileName");
+		i64fn_i SdSize = (i64fn_i)proc(h, "GetSaveDataFileSize");
+		ptrfn_i SdBuf = (ptrfn_i)proc(h, "GetSaveDataFileBuffer");
+		for (int i = 0; i < SdCount(); i++) {
+			char path[1024];
+			snprintf(path, sizeof path, "%s/%s", savedataOut, (const char *)SdName(i));
+			FILE *f = fopen(path, "wb");
+			if (!f) { fprintf(stderr, "cannot write %s\n", path); continue; }
+			fwrite((const void *)SdBuf(i), 1, (size_t)SdSize(i), f);
+			fclose(f);
+			printf("savedata %s %lld bytes\n", (const char *)SdName(i), (long long)SdSize(i));
+		}
 	}
 	wbx_deactivate_host(h, &r);
 	wbx_destroy_host(h, &r);

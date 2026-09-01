@@ -20,6 +20,8 @@
 #include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
+#include "Core/HW/DSP.h"
+#include "Core/HW/EXI/EXI_Device.h"
 #include "Core/HW/Memmap.h"
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/System.h"
@@ -59,6 +61,34 @@ static constexpr uint16_t kWireBit[12] = {
 // the picture (the PS2 deinterlacing lessons apply later).
 static uint32_t s_video[720 * 574];
 static int s_video_w = 640, s_video_h = 480;
+
+// ---- save data ------------------------------------------------------------
+// The memory cards report in through patch 0015's hook; the frontend reads
+// them out through the savedata exports and mounts prior saves back at
+// "savedata/<name>", which is exactly the path the machine opens.
+struct MemcardReg
+{
+  std::string name;
+  uint8_t* data = nullptr;
+  uint32_t size = 0;
+};
+static MemcardReg s_memcard[2];
+
+extern "C" void Chimera_RegisterMemcard(int slot, const char* filename, uint8_t* data,
+                                        uint32_t size)
+{
+  if (slot < 0 || slot > 1)
+    return;
+  if (!filename)
+  {
+    s_memcard[slot] = {};
+    return;
+  }
+  const char* base = strrchr(filename, '/');
+  s_memcard[slot].name = base ? base + 1 : filename;
+  s_memcard[slot].data = data;
+  s_memcard[slot].size = size;
+}
 
 // ---- audio out ------------------------------------------------------------
 static int16_t s_audio[16384 * 2];
@@ -155,6 +185,13 @@ public:
     // the machine's clock belongs to the machine: a fixed epoch, never the host
     layer->Set(Config::MAIN_CUSTOM_RTC_ENABLE, true);
     layer->Set(Config::MAIN_CUSTOM_RTC_VALUE, u32(946684800));
+    // the cards live at a fixed relative path: the frontend mounts prior
+    // saves there, the export names match, and no host user dir leaks in
+    layer->Set(Config::MAIN_MEMCARD_A_PATH, std::string("savedata/MemoryCardA.raw"));
+    layer->Set(Config::MAIN_MEMCARD_B_PATH, std::string("savedata/MemoryCardB.raw"));
+    // raw cards, not GCI folders: one buffer is one save-data file
+    layer->Set(Config::MAIN_SLOT_A, ExpansionInterface::EXIDeviceType::MemoryCard);
+    layer->Set(Config::MAIN_SLOT_B, ExpansionInterface::EXIDeviceType::None);
     layer->Set(Common::Log::LOGGER_VERBOSITY, Common::Log::LogLevel::LINFO);
   }
   void Save(Config::Layer*) override {}
@@ -329,6 +366,85 @@ int chimera_dolphin_vsync_numerator(void)
 int chimera_dolphin_vsync_denominator(void)
 {
   return int(Sys().GetVideoInterface().GetTargetRefreshRateDenominator());
+}
+
+// domains beyond main RAM: index 1 = ARAM (16MB audio memory), 2 = L1 cache
+uint8_t* chimera_dolphin_domain_ptr(int i)
+{
+  switch (i)
+  {
+  case 0:
+    return Sys().GetMemory().GetRAM();
+  case 1:
+    return Sys().GetDSP().GetARAMPtr();
+  case 2:
+    return Sys().GetMemory().GetL1Cache();
+  }
+  return nullptr;
+}
+
+int64_t chimera_dolphin_domain_size(int i)
+{
+  switch (i)
+  {
+  case 0:
+    return Sys().GetMemory().GetRamSizeReal();
+  case 1:
+    return 16 * 1024 * 1024;
+  case 2:
+    return Sys().GetMemory().GetL1CacheSize();
+  }
+  return 0;
+}
+
+const char* chimera_dolphin_domain_name(int i)
+{
+  switch (i)
+  {
+  case 0:
+    return "System RAM";
+  case 1:
+    return "ARAM";
+  case 2:
+    return "L1 Cache";
+  }
+  return nullptr;
+}
+
+int chimera_dolphin_savedata_count(void)
+{
+  return (s_memcard[0].data ? 1 : 0) + (s_memcard[1].data ? 1 : 0);
+}
+
+static const MemcardReg* SavedataAt(int i)
+{
+  for (int slot = 0; slot < 2; slot++)
+  {
+    if (!s_memcard[slot].data)
+      continue;
+    if (i == 0)
+      return &s_memcard[slot];
+    i--;
+  }
+  return nullptr;
+}
+
+const char* chimera_dolphin_savedata_name(int i)
+{
+  const MemcardReg* r = SavedataAt(i);
+  return r ? r->name.c_str() : nullptr;
+}
+
+int64_t chimera_dolphin_savedata_size(int i)
+{
+  const MemcardReg* r = SavedataAt(i);
+  return r ? r->size : 0;
+}
+
+const uint8_t* chimera_dolphin_savedata_buffer(int i)
+{
+  const MemcardReg* r = SavedataAt(i);
+  return r ? r->data : nullptr;
 }
 
 uint8_t* chimera_dolphin_ram_ptr(void)

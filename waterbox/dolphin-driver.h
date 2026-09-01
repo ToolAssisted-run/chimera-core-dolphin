@@ -21,6 +21,13 @@ const uint32_t* chimera_dolphin_video(int* w, int* h);
 const int16_t* chimera_dolphin_audio(int* frames);
 int chimera_dolphin_vsync_numerator(void);
 int chimera_dolphin_vsync_denominator(void);
+int chimera_dolphin_savedata_count(void);
+uint8_t* chimera_dolphin_domain_ptr(int i);
+int64_t chimera_dolphin_domain_size(int i);
+const char* chimera_dolphin_domain_name(int i);
+const char* chimera_dolphin_savedata_name(int i);
+int64_t chimera_dolphin_savedata_size(int i);
+const uint8_t* chimera_dolphin_savedata_buffer(int i);
 
 #ifdef __cplusplus
 }

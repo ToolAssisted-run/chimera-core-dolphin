@@ -45,6 +45,7 @@ int main(int argc, char** argv)
   long frames = 60;
   long report = 10;
   const char* ram_out = nullptr;
+  const char* savedata_out = nullptr;
   struct { long first, count; int index; } press[32];
   int presses = 0;
   for (int i = 1; i < argc; i++)
@@ -59,6 +60,8 @@ int main(int argc, char** argv)
       sys = argv[++i];
     else if (!strcmp(argv[i], "--ram-out") && i + 1 < argc)
       ram_out = argv[++i];
+    else if (!strcmp(argv[i], "--savedata-out") && i + 1 < argc)
+      savedata_out = argv[++i];
     else if (!strcmp(argv[i], "--press") && i + 1 < argc && presses < 32)
     {
       long a, b;
@@ -133,6 +136,24 @@ int main(int argc, char** argv)
     FILE* f = fopen(ram_out, "wb");
     fwrite(chimera_dolphin_ram_ptr(), 1, chimera_dolphin_ram_size(), f);
     fclose(f);
+  }
+  if (savedata_out)
+  {
+    for (int i = 0; i < chimera_dolphin_savedata_count(); i++)
+    {
+      char path[1024];
+      snprintf(path, sizeof path, "%s/%s", savedata_out, chimera_dolphin_savedata_name(i));
+      FILE* f = fopen(path, "wb");
+      if (!f)
+      {
+        fprintf(stderr, "cannot write %s\n", path);
+        continue;
+      }
+      fwrite(chimera_dolphin_savedata_buffer(i), 1, (size_t)chimera_dolphin_savedata_size(i), f);
+      fclose(f);
+      printf("savedata %s %lld bytes\n", chimera_dolphin_savedata_name(i),
+             (long long)chimera_dolphin_savedata_size(i));
+    }
   }
   chimera_dolphin_shutdown();
   printf("done\n");

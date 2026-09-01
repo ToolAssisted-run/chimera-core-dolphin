@@ -1,0 +1,54 @@
+diff --git a/Source/Core/Core/HW/GCMemcard/GCMemcardRaw.cpp b/Source/Core/Core/HW/GCMemcard/GCMemcardRaw.cpp
+index 1a8644b81a..e9aaeb3660 100644
+--- a/Source/Core/Core/HW/GCMemcard/GCMemcardRaw.cpp
++++ b/Source/Core/Core/HW/GCMemcard/GCMemcardRaw.cpp
+@@ -35,6 +35,10 @@
+ #define SIZE_TO_Mb (1024 * 8 * 16)
+ #define MC_HDR_SIZE 0xA000
+ 
++// Null in every build that does not embed the core.
++extern "C" void Chimera_RegisterMemcard(int slot, const char* filename, u8* data,
++                                        u32 size) __attribute__((weak));
++
+ MemoryCard::MemoryCard(std::string filename, ExpansionInterface::Slot card_slot, u16 size_mbits)
+     : MemoryCardBase(card_slot, size_mbits), m_filename(std::move(filename))
+ {
+@@ -64,8 +68,10 @@ MemoryCard::MemoryCard(std::string filename, ExpansionInterface::Slot card_slot,
+     const bool shift_jis = m_filename.contains(".JAP.raw");
+     const u32 rtc_bias = sram.settings.rtc_bias;
+     const u32 sram_language = static_cast<u32>(sram.settings.language);
+-    const u64 format_time =
+-        Common::Timer::GetLocalTimeSinceJan1970() - ExpansionInterface::CEXIIPL::GC_EPOCH;
++    // The card is formatted by the MACHINE; its clock, not the host's, names
++    // the moment. With a custom RTC this is also deterministic.
++    const u64 format_time = ExpansionInterface::CEXIIPL::GetEmulatedTime(
++        Core::System::GetInstance(), ExpansionInterface::CEXIIPL::GC_EPOCH);
+     Memcard::GCMemcard::Format(&m_memcard_data[0], flash_id, size_mbits, shift_jis, rtc_bias,
+                                sram_language, format_time);
+ 
+@@ -75,6 +81,15 @@ MemoryCard::MemoryCard(std::string filename, ExpansionInterface::Slot card_slot,
+     INFO_LOG_FMT(EXPANSIONINTERFACE, "No memory card found. A new one was created instead.");
+   }
+ 
++  // A host embedding the core may own persistence itself: it learns where
++  // the card's bytes live and no flush thread ever runs.
++  if (Chimera_RegisterMemcard)
++  {
++    Chimera_RegisterMemcard(m_card_slot == ExpansionInterface::Slot::A ? 0 : 1,
++                            m_filename.c_str(), m_memcard_data.get(), m_memory_card_size);
++    return;
++  }
++
+   // Class members (including inherited ones) have now been initialized, so
+   // it's safe to startup the flush thread (which reads them).
+   m_flush_buffer = std::make_unique<u8[]>(m_memory_card_size);
+@@ -83,6 +98,9 @@ MemoryCard::MemoryCard(std::string filename, ExpansionInterface::Slot card_slot,
+ 
+ MemoryCard::~MemoryCard()
+ {
++  if (Chimera_RegisterMemcard)
++    Chimera_RegisterMemcard(m_card_slot == ExpansionInterface::Slot::A ? 0 : 1, nullptr, nullptr,
++                            0);
+   if (m_flush_thread.joinable())
+   {
+     m_flush_trigger.Set();

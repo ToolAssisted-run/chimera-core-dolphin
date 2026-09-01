@@ -115,29 +115,49 @@ ECL_EXPORT int GetVsyncDenominator(void)
   return chimera_dolphin_vsync_denominator();
 }
 
+ECL_EXPORT int32_t GetSaveDataFileCount(void)
+{
+  return chimera_dolphin_savedata_count();
+}
+
+ECL_EXPORT const char* GetSaveDataFileName(int32_t i)
+{
+  return chimera_dolphin_savedata_name(i);
+}
+
+ECL_EXPORT int64_t GetSaveDataFileSize(int32_t i)
+{
+  return chimera_dolphin_savedata_size(i);
+}
+
+ECL_EXPORT const uint8_t* GetSaveDataFileBuffer(int32_t i)
+{
+  return chimera_dolphin_savedata_buffer(i);
+}
+
 ECL_EXPORT int GetMemoryDomainCount(void)
 {
-  return 1;
+  return 3;
 }
 
 ECL_EXPORT const char* GetMemoryDomainName(int i)
 {
-  return i == 0 ? "System RAM" : nullptr;
+  return chimera_dolphin_domain_name(i);
 }
 
 ECL_EXPORT uint8_t* GetMemoryDomainPtr(int i)
 {
-  return i == 0 ? chimera_dolphin_ram_ptr() : nullptr;
+  return chimera_dolphin_domain_ptr(i);
 }
 
 ECL_EXPORT int64_t GetMemoryDomainSize(int i)
 {
-  return i == 0 ? chimera_dolphin_ram_size() : 0;
+  return chimera_dolphin_domain_size(i);
 }
 
 ECL_EXPORT int GetMemoryDomainWritable(int i)
 {
-  return i == 0;
+  return i >= 0 && i < 3;
 }
 
 }  // extern "C"
