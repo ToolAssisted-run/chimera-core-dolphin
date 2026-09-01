@@ -25,6 +25,7 @@ void chimera_dolphin_set_memcard_a(int present);
 void chimera_dolphin_set_cpu_core(const char* name);
 void chimera_dolphin_set_renderer(const char* name);
 int chimera_dolphin_savedata_count(void);
+int chimera_dolphin_domain_count(void);
 uint8_t* chimera_dolphin_domain_ptr(int i);
 int64_t chimera_dolphin_domain_size(int i);
 const char* chimera_dolphin_domain_name(int i);

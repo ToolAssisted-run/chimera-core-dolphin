@@ -1,0 +1,23 @@
+diff --git a/Source/Core/Core/IOS/FS/FileSystemCommon.cpp b/Source/Core/Core/IOS/FS/FileSystemCommon.cpp
+index 0e13192c5b..7b5bb6ed94 100644
+--- a/Source/Core/Core/IOS/FS/FileSystemCommon.cpp
++++ b/Source/Core/Core/IOS/FS/FileSystemCommon.cpp
+@@ -40,9 +40,18 @@ SplitPathResult SplitPathAndBasename(std::string_view path)
+           std::string(path.substr(last_separator + 1))};
+ }
+ 
++// A host embedding the core may keep the NAND somewhere other than a host
++// directory (in memory, where savestates can see it); null everywhere else.
++extern "C" FileSystem* Chimera_MakeNandFilesystem() __attribute__((weak));
++
+ std::unique_ptr<FileSystem> MakeFileSystem(Location location,
+                                            std::vector<NandRedirect> nand_redirects)
+ {
++  if (Chimera_MakeNandFilesystem)
++  {
++    if (FileSystem* fs = Chimera_MakeNandFilesystem())
++      return std::unique_ptr<FileSystem>(fs);
++  }
+   const std::string nand_root =
+       File::GetUserPath(location == Location::Session ? D_SESSION_WIIROOT_IDX : D_WIIROOT_IDX);
+   return std::make_unique<HostFileSystem>(nand_root, std::move(nand_redirects));

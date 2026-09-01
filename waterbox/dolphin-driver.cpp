@@ -113,6 +113,13 @@ static uint32_t YuyvToBgra(int y, int u, int v)
   return 0xFF000000u | (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
 }
 
+extern "C" uint64_t Chimera_SettingsSerialSeconds()
+{
+  // the same fixed machine epoch the RTC starts at: deterministic, and a
+  // plausible moment for the console to have been set up
+  return 946684800ull;
+}
+
 extern "C" bool Chimera_GetPadStatus(int chan, GCPadStatus* status)
 {
   if (chan < 0 || chan >= 4)
@@ -407,37 +414,85 @@ int chimera_dolphin_vsync_denominator(void)
   return int(Sys().GetVideoInterface().GetTargetRefreshRateDenominator());
 }
 
-// domains beyond main RAM: index 1 = ARAM (16MB audio memory), 2 = L1 cache
+// Domains: main RAM always; a Wii adds MEM2 and loses the ARAM a GameCube
+// has (index 1 keeps a stable meaning per machine, and the count says which
+// machine this is).
+int chimera_dolphin_domain_count(void)
+{
+  return Sys().IsWii() ? 3 : 3;
+}
+
 uint8_t* chimera_dolphin_domain_ptr(int i)
 {
+  auto& memory = Sys().GetMemory();
+  if (Sys().IsWii())
+  {
+    switch (i)
+    {
+    case 0:
+      return memory.GetRAM();
+    case 1:
+      return memory.GetEXRAM();
+    case 2:
+      return memory.GetL1Cache();
+    }
+    return nullptr;
+  }
   switch (i)
   {
   case 0:
-    return Sys().GetMemory().GetRAM();
+    return memory.GetRAM();
   case 1:
     return Sys().GetDSP().GetARAMPtr();
   case 2:
-    return Sys().GetMemory().GetL1Cache();
+    return memory.GetL1Cache();
   }
   return nullptr;
 }
 
 int64_t chimera_dolphin_domain_size(int i)
 {
+  auto& memory = Sys().GetMemory();
+  if (Sys().IsWii())
+  {
+    switch (i)
+    {
+    case 0:
+      return memory.GetRamSizeReal();
+    case 1:
+      return memory.GetExRamSizeReal();
+    case 2:
+      return memory.GetL1CacheSize();
+    }
+    return 0;
+  }
   switch (i)
   {
   case 0:
-    return Sys().GetMemory().GetRamSizeReal();
+    return memory.GetRamSizeReal();
   case 1:
     return 16 * 1024 * 1024;
   case 2:
-    return Sys().GetMemory().GetL1CacheSize();
+    return memory.GetL1CacheSize();
   }
   return 0;
 }
 
 const char* chimera_dolphin_domain_name(int i)
 {
+  if (Sys().IsWii())
+  {
+    switch (i)
+    {
+    case 0:
+      return "System RAM";
+    case 1:
+      return "MEM2";
+    case 2:
+      return "L1 Cache";
+    }
+    return nullptr;
+  }
   switch (i)
   {
   case 0:

@@ -11,6 +11,7 @@ frames="${1:-120}"
 sys="$root/extern/dolphin/Data/Sys"
 swiss="$root/tests/roms/swiss_r2092.dol"
 disc="$root/tests/roms-local/Mortal Kombat - Deadly Alliance.iso"
+wiidisc="$root/tests/roms-local/Dragon Ball Z - Budokai Tenkaichi 3 (USA) (Rev 1).iso"
 work="$here/tests/work"
 pass=0; fail=0; skip=0
 
@@ -98,6 +99,23 @@ if [ -f "$disc" ]; then
 	else FAIL "disc leg"; fi
 else
 	SKIP "disc leg (no commercial disc in tests/roms-local) - would prove DiscIO+DVD timing equivalence on a real game"
+fi
+
+# ---- tier 2b: a Wii disc ---------------------------------------------------
+# The other machine this core is: IOS HLE, the NAND in guest memory, the
+# disc decrypted with dolphin's own keys. The rerecord leg doubles as proof
+# the RAM NAND is machine state an arena snapshot captures.
+if [ -f "$wiidisc" ]; then
+	nat w1 --frames 60 --report 1 "$wiidisc" > "$work/w1.txt"
+	wbx --frames 60 --report 1 "$wiidisc" > "$work/wg.txt"
+	if cmp -s "$work/w1.txt" "$work/wg.txt"; then PASS "wii disc leg - native == sandbox at 60 frames"
+	else FAIL "wii disc leg"; fi
+	wbx --frames 30 --report 1 --rerecord "$wiidisc" > "$work/wrr.txt"
+	wbx --frames 30 --report 1 "$wiidisc" > "$work/wpl.txt"
+	if [ -s "$work/wpl.txt" ] && cmp -s "$work/wrr.txt" "$work/wpl.txt"; then PASS "wii rerecord leg - the RAM NAND survives arena restores"
+	else FAIL "wii rerecord leg"; fi
+else
+	SKIP "wii legs (no Wii disc in tests/roms-local) - would prove IOS HLE + the in-memory NAND across flavors"
 fi
 
 say ""

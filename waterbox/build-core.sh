@@ -57,6 +57,7 @@ g++ -specs "$sr/lib/musl-gcc.specs" -mcmodel=large -fno-pic -fno-pie \
 	"$here"/obj-guest/wbx-entry.o "$here"/obj-guest/dolphin-driver.o \
 	"$here"/obj-guest/host-stubs.o "$here"/obj-guest/guest-syscalls.o \
 	"$here"/obj-guest/gl-shim.o "$here"/obj-guest/gl-bridge-guest.o "$here"/obj-guest/glad-gl.o \
+	"$here"/obj-guest/ram-nand.o \
 	"$mbuild/source/guest/cxxglue.c.o" "$mbuild/source/guest/emulibc.c.o" \
 	-Wl,--start-group $libs -Wl,--end-group \
 	-L"$sr/lib" -lstdc++ -lgcc -lgcc_eh -lc

@@ -1,0 +1,20 @@
+diff --git a/Source/Core/Common/SettingsHandler.cpp b/Source/Core/Common/SettingsHandler.cpp
+index 7f2f436798..9ea75103a7 100644
+--- a/Source/Core/Common/SettingsHandler.cpp
++++ b/Source/Core/Common/SettingsHandler.cpp
+@@ -115,9 +115,14 @@ void SettingsWriter::WriteByte(u8 b)
+   m_key = (m_key >> 31) | (m_key << 1);
+ }
+ 
++// A host embedding the core may know what time the MACHINE thinks it is;
++// the weak symbol is null in every other build and the host clock stands.
++extern "C" u64 Chimera_SettingsSerialSeconds() __attribute__((weak));
++
+ std::string SettingsWriter::GenerateSerialNumber()
+ {
+-  const std::time_t t = std::time(nullptr);
++  const std::time_t t =
++      Chimera_SettingsSerialSeconds ? std::time_t(Chimera_SettingsSerialSeconds()) : std::time(nullptr);
+ 
+   // Must be 9 characters at most; otherwise the serial number will be rejected by SDK libraries,
+   // as there is a check to ensure the string length is strictly lower than 10.

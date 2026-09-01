@@ -175,7 +175,7 @@ ECL_EXPORT const uint8_t* GetSaveDataFileBuffer(int32_t i)
 
 ECL_EXPORT int GetMemoryDomainCount(void)
 {
-  return 3;
+  return chimera_dolphin_domain_count();
 }
 
 ECL_EXPORT const char* GetMemoryDomainName(int i)

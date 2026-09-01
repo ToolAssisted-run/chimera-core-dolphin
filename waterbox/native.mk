@@ -38,7 +38,7 @@ $(O)/gl-host.o: gl-host.c
 	@mkdir -p $(O)
 	gcc -O2 -DCHIMERA_GL_BRIDGE $(GLINCS) -c -o $@ $<
 
-$(O)/run-native: $(O)/run-native.o $(O)/dolphin-driver.o $(O)/host-stubs.o $(O)/gl-shim.o $(O)/gl-bridge-guest.o $(O)/glad-gl.o $(O)/gl-host.o
+$(O)/run-native: $(O)/run-native.o $(O)/dolphin-driver.o $(O)/host-stubs.o $(O)/gl-shim.o $(O)/gl-bridge-guest.o $(O)/glad-gl.o $(O)/gl-host.o $(O)/ram-nand.o
 	g++ -o $@ $^ -Wl,--start-group $(LIBS) -Wl,--end-group -lpthread -lm -ldl -lrt -lEGL
 
 clean:

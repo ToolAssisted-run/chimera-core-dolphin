@@ -26,7 +26,7 @@ CXXFLAGS := $(WBFLAGS) $(TUFLAGS) -DCHIMERA_GUEST -DCHIMERA_GL_BRIDGE $(MBINCS) 
 CFLAGS   := $(WBFLAGS) -DCHIMERA_GUEST $(GLINCS)
 
 OBJS := $(O)/dolphin-driver.o $(O)/host-stubs.o $(O)/wbx-entry.o $(O)/guest-syscalls.o \
-        $(O)/gl-shim.o $(O)/gl-bridge-guest.o $(O)/glad-gl.o
+        $(O)/gl-shim.o $(O)/gl-bridge-guest.o $(O)/glad-gl.o $(O)/ram-nand.o
 
 all: $(OBJS)
 
