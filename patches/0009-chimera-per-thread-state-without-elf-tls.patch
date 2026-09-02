@@ -1,3 +1,40 @@
+diff --git a/Source/Core/Common/SandboxTls.h b/Source/Core/Common/SandboxTls.h
+new file mode 100644
+index 0000000000..da015e1944
+--- /dev/null
++++ b/Source/Core/Common/SandboxTls.h
+@@ -0,0 +1,31 @@
++// Copyright 2026 Dolphin Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++// For hosts without ELF TLS (CHIMERA_NO_TLS): a pthread key wearing a value's
++// clothes. Zero-initialized per thread, like the thread_local it replaces.
++#pragma once
++
++#include <pthread.h>
++#include <cstdint>
++
++namespace Common
++{
++template <typename T>
++class SandboxTlsValue
++{
++public:
++  SandboxTlsValue() { pthread_key_create(&m_key, nullptr); }
++  SandboxTlsValue& operator=(T v)
++  {
++    pthread_setspecific(m_key, reinterpret_cast<void*>(static_cast<uintptr_t>(v)));
++    return *this;
++  }
++  operator T() const
++  {
++    return static_cast<T>(reinterpret_cast<uintptr_t>(pthread_getspecific(m_key)));
++  }
++
++private:
++  pthread_key_t m_key;
++};
++}  // namespace Common
 diff --git a/Source/Core/Common/MemoryUtil.cpp b/Source/Core/Common/MemoryUtil.cpp
 index 0d66890d2b..25a7120258 100644
 --- a/Source/Core/Common/MemoryUtil.cpp
