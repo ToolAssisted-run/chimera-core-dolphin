@@ -32,7 +32,7 @@ chimera_root="$(cd "$chimera_root" && pwd)"
 [ -n "$mb" ] || mb="$chimera_root/extern/tools/chimera-common-minibox"
 
 # the guest: cmake archives + the adapter, linked by build-core.sh
-[ -d "$root/build/guest" ] || sh "$here/build-guest.sh"
+[ -d "$root/build/guest" ] || MINIBOX_DIR="$mb" sh "$here/build-guest.sh"
 MINIBOX_DIR="$mb" sh "$here/build-core.sh" -m "$mb"
 
 staging="$root/build/package-staging"
