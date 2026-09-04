@@ -26,8 +26,6 @@
 
 /* generated-gl/gl-bridge-guest.cpp; install refuses a host whose list is
  * shorter than this core was built against */
-bool chimera_gl_install(chimera_gl_bridge_fn bridge);
-void* chimera_gl_lookup(const char* name);
 
 static chimera_gl_bridge_fn g_bridge;
 
