@@ -1,0 +1,336 @@
+diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.cpp b/Source/Core/VideoBackends/OGL/OGLGfx.cpp
+--- a/Source/Core/VideoBackends/OGL/OGLGfx.cpp
++++ b/Source/Core/VideoBackends/OGL/OGLGfx.cpp
+@@ -8,19 +8,30 @@
+ #include "Common/GL/GLUtil.h"
+ #include "Common/Logging/LogManager.h"
+ 
++#include "VideoBackends/OGL/OGLBoundingBox.h"
+ #include "VideoBackends/OGL/OGLConfig.h"
++#include "VideoBackends/OGL/OGLPerfQuery.h"
+ #include "VideoBackends/OGL/OGLPipeline.h"
+ #include "VideoBackends/OGL/OGLShader.h"
+ #include "VideoBackends/OGL/OGLTexture.h"
++#include "VideoBackends/OGL/OGLVertexManager.h"
+ #include "VideoBackends/OGL/ProgramShaderCache.h"
+ #include "VideoBackends/OGL/SamplerCache.h"
+ 
+ #include "VideoCommon/AsyncShaderCompiler.h"
++#include "VideoCommon/BoundingBox.h"
+ #include "VideoCommon/DriverDetails.h"
++#include "VideoCommon/FramebufferManager.h"
++#include "VideoCommon/PerfQueryBase.h"
+ #include "VideoCommon/Present.h"
++#include "VideoCommon/ShaderCache.h"
++#include "VideoCommon/TextureCacheBase.h"
++#include "VideoCommon/VertexLoaderManager.h"
++#include "VideoCommon/VertexManagerBase.h"
+ #include "VideoCommon/VideoConfig.h"
+ 
+ #include <algorithm>
++#include <cstdint>
+ #include <string_view>
+ 
+ namespace OGL
+@@ -732,4 +743,99 @@
+           AbstractTextureFormat::RGBA8};
+ }
+ 
++void OGLGfx::ChimeraRebuildGLObjects()
++{
++  // The teardown of a dead context's names leaves errors queued; the init paths
++  // below assert a clean slate, so drain first.
++  while (glGetError() != GL_NO_ERROR)
++  {
++  }
++
++  // Low-level objects that persistent-mapped buffers a frame writes through
++  // before any higher call: the uniform buffer + attributeless VAO, and the
++  // vertex manager's stream buffers. The program map is left intact - the
++  // pipelines that own its entries are rebuilt below and release each through
++  // it, so it stays balanced (Shutdown() would demand it already empty).
++  ProgramShaderCache::ReacquireContextObjects();
++  static_cast<VertexManager*>(g_vertex_manager.get())->RecreateStreamBuffers();
++
++  // The two shared framebuffers, the samplers, the bounding-box SSBO and the
++  // perf-query objects.
++  glDeleteFramebuffers(1, &m_shared_read_framebuffer);
++  glDeleteFramebuffers(1, &m_shared_draw_framebuffer);
++  glGenFramebuffers(1, &m_shared_read_framebuffer);
++  glGenFramebuffers(1, &m_shared_draw_framebuffer);
++  g_sampler_cache = std::make_unique<SamplerCache>();
++  static_cast<OGLBoundingBox*>(g_bounding_box.get())->Initialize();
++  g_perf_query = GetPerfQuery(IsGLES());
++
++  // Everything the higher layers cached named the gone context too. Drop it and
++  // rebuild what has to exist now; the rest comes back from emulated memory the
++  // next time a draw asks for it. Each rebuild below destroys its old pipelines
++  // (releasing their programs) and makes new ones on the live context, both
++  // through the map ReacquireContextObjects left untouched. The cached native
++  // vertex formats (per-format VAOs) are dropped so each is made again on
++  // demand.
++  VertexLoaderManager::Clear();
++  g_texture_cache->Invalidate();
++  g_texture_cache->ChimeraDropStagingTextures();
++  g_framebuffer_manager->RecreateEFBFramebuffer(g_ActiveConfig.iEFBScale);
++  g_framebuffer_manager->RecompileShaders();
++  g_shader_cache->Reload();
++
++  // Nothing the renderer thought was bound still is.
++  ProgramShaderCache::InvalidateVertexFormat();
++  m_current_pipeline = nullptr;
++  m_current_framebuffer = nullptr;
++  m_current_rasterization_state = RenderState::GetInvalidRasterizationState();
++  m_current_depth_state = RenderState::GetInvalidDepthState();
++  m_current_blend_state = RenderState::GetInvalidBlendingState();
++  m_bound_textures.fill(nullptr);
++
++  while (glGetError() != GL_NO_ERROR)
++  {
++  }
++}
++
+ }  // namespace OGL
++
++// chimera: which context the GL calls are landing on (miniBox source/gl:
++// GL_OP_CONTEXT_ID). Weak, so a build with no bridge links null here.
++extern "C" uint64_t chimera_gl_context_id(void) __attribute__((weak));
++
++// chimera: the driver calls this at the head of every frame, before the machine
++// steps. The GL objects the OGL backend holds are names that live in emulated
++// memory; a savestate load into a later session leaves them belonging to a
++// context that is gone. Comparing the context the calls are landing on with the
++// one they came from is the only way to notice - and here, between frames, is
++// the one place nothing is mid-draw and no resource is on the stack, so the
++// whole backend can be rebuilt at once, covering every path (texture cache,
++// framebuffer manager, presenter) that issues GL without passing through a
++// backend setter. A no-op when there is no bridge, or the software renderer is
++// in use (g_gfx is not an OGLGfx then - the driver only calls this for OGL).
++extern "C" void chimera_dolphin_gl_frame_start(void)
++{
++  if (!(&chimera_gl_context_id))
++    return;
++  const uint64_t live = chimera_gl_context_id();
++  // 0 is "cannot tell" - no bridge, or a host older than the question - and a
++  // renderer that cannot tell must assume the ground has not moved.
++  if (live == 0)
++    return;
++
++  // The remembered context lives in emulated memory, so a savestate restores it
++  // like everything else: on a fresh load it holds the save session's id, which
++  // differs from the one now live.
++  static uint64_t s_saved_context = 0;
++  if (s_saved_context != 0 && live != s_saved_context)
++  {
++    if (OGL::OGLGfx* gfx = OGL::GetOGLGfx())
++    {
++      WARN_LOG_FMT(VIDEO,
++                   "chimera: these GL objects came from another context ({}, now {}); rebuilding",
++                   s_saved_context, live);
++      gfx->ChimeraRebuildGLObjects();
++    }
++  }
++  s_saved_context = live;
++}
+diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.h b/Source/Core/VideoBackends/OGL/OGLGfx.h
+--- a/Source/Core/VideoBackends/OGL/OGLGfx.h
++++ b/Source/Core/VideoBackends/OGL/OGLGfx.h
+@@ -94,6 +94,19 @@
+ 
+   SurfaceInfo GetSurfaceInfo() const override;
+ 
++  // chimera: rebuild every GL object this backend holds on the live context.
++  //
++  // Every object - the shared framebuffers here, the programs and stream buffer
++  // in ProgramShaderCache, the samplers, the vertex manager's buffers, the
++  // bounding box and perf-query objects, and every texture, framebuffer and
++  // pipeline the higher layers cache - is a NAME the driver handed out, and
++  // those names live in emulated memory. A whole-machine savestate carries them
++  // into whatever session loads it, where the context that owned them is gone.
++  // This remakes them, reading nothing back from the GPU; emulated memory
++  // refills the rest on demand. Driven from the driver between frames (nothing
++  // mid-draw, no resource on the stack), so it can free and remake freely.
++  void ChimeraRebuildGLObjects();
++
+ private:
+   void CheckForSurfaceChange();
+   void CheckForSurfaceResize();
+diff --git a/Source/Core/VideoBackends/OGL/ProgramShaderCache.cpp b/Source/Core/VideoBackends/OGL/ProgramShaderCache.cpp
+--- a/Source/Core/VideoBackends/OGL/ProgramShaderCache.cpp
++++ b/Source/Core/VideoBackends/OGL/ProgramShaderCache.cpp
+@@ -500,6 +500,26 @@
+   s_pipeline_programs.clear();
+ }
+ 
++void ProgramShaderCache::ReacquireContextObjects()
++{
++  // The names below belong to a context that is gone; dropping them is a no-op
++  // on the driver (it never handed them out here) but the bookkeeping has to
++  // let go too. The linked programs are deliberately untouched: the pipelines
++  // that reference them are rebuilt elsewhere and release each through the map,
++  // so it stays consistent without being cleared here.
++  s_buffer.reset();
++  glBindVertexArray(0);
++  glDeleteBuffers(1, &s_attributeless_VBO);
++  glDeleteVertexArrays(1, &s_attributeless_VAO);
++  s_attributeless_VBO = 0;
++  s_attributeless_VAO = 0;
++  s_last_VAO = 0;
++  CurrentProgram = 0;
++
++  s_buffer = StreamBuffer::Create(GL_UNIFORM_BUFFER, VertexManagerBase::UNIFORM_STREAM_BUFFER_SIZE);
++  CreateAttributelessVAO();
++}
++
+ void ProgramShaderCache::CreateAttributelessVAO()
+ {
+   glGenVertexArrays(1, &s_attributeless_VAO);
+diff --git a/Source/Core/VideoBackends/OGL/ProgramShaderCache.h b/Source/Core/VideoBackends/OGL/ProgramShaderCache.h
+--- a/Source/Core/VideoBackends/OGL/ProgramShaderCache.h
++++ b/Source/Core/VideoBackends/OGL/ProgramShaderCache.h
+@@ -88,6 +88,14 @@
+   static void Shutdown();
+   static void CreateHeader();
+ 
++  // chimera: remake the uniform stream buffer and the attributeless VAO on the
++  // live GL context after a savestate load has left them belonging to a context
++  // that is gone. Unlike Shutdown() (which wants the program map already empty
++  // and asserts it), the linked programs are left to the pipelines that own
++  // them - those are rebuilt separately and release each through the map, so it
++  // stays balanced without being torn down here.
++  static void ReacquireContextObjects();
++
+   // This counter increments with each shader object allocated, in order to give it a unique ID.
+   // Since the shaders can be destroyed after a pipeline is created, we can't use the shader pointer
+   // as a key for GL programs. For the same reason, we can't use the GL objects either. This ID is
+diff --git a/Source/Core/VideoBackends/OGL/OGLVertexManager.cpp b/Source/Core/VideoBackends/OGL/OGLVertexManager.cpp
+--- a/Source/Core/VideoBackends/OGL/OGLVertexManager.cpp
++++ b/Source/Core/VideoBackends/OGL/OGLVertexManager.cpp
+@@ -53,6 +53,12 @@
+   if (!VertexManagerBase::Initialize())
+     return false;
+ 
++  CreateStreamBuffers();
++  return true;
++}
++
++void VertexManager::CreateStreamBuffers()
++{
+   m_vertex_buffer = StreamBuffer::Create(GL_ARRAY_BUFFER, VERTEX_STREAM_BUFFER_SIZE);
+   m_index_buffer = StreamBuffer::Create(GL_ELEMENT_ARRAY_BUFFER, INDEX_STREAM_BUFFER_SIZE);
+   if (g_ActiveConfig.UseVSForLinePointExpand() || g_backend_info.bSupportsDynamicVertexLoader)
+@@ -86,8 +92,33 @@
+       glTexBuffer(GL_TEXTURE_BUFFER, it.second, m_texel_buffer->GetGLBufferId());
+     }
+   }
++}
+ 
+-  return true;
++// chimera: the stream buffers and texel views are persistent-mapped names a
++// gone context handed out; a savestate load lands them in a session that never
++// owned them, where mapping one hands back a dangling pointer. Drop them and
++// make them again on the live context. Safe to call between frames.
++void VertexManager::RecreateStreamBuffers()
++{
++  if (g_backend_info.bSupportsPaletteConversion)
++  {
++    glDeleteTextures(static_cast<GLsizei>(m_texel_buffer_views.size()),
++                     m_texel_buffer_views.data());
++    m_texel_buffer_views.fill(0);
++  }
++  m_texel_buffer.reset();
++  m_index_buffer.reset();
++  m_vertex_buffer.reset();
++
++  CreateStreamBuffers();
++
++  // A savestate can be taken mid-batch: it restores m_is_flushed == false and
++  // the write pointers into the buffer that has just been dropped, so the next
++  // PrepareForAdditionalData would reuse them and copy vertices into freed
++  // memory. Abandon that batch - the machine re-issues its commands from the
++  // restored FIFO, and the picture is outside the savestate anyway - so the
++  // next primitive maps the fresh buffer instead.
++  ChimeraDiscardPendingBatch();
+ }
+ 
+ void VertexManager::UploadUtilityUniforms(const void* uniforms, u32 uniforms_size)
+diff --git a/Source/Core/VideoBackends/OGL/OGLVertexManager.h b/Source/Core/VideoBackends/OGL/OGLVertexManager.h
+--- a/Source/Core/VideoBackends/OGL/OGLVertexManager.h
++++ b/Source/Core/VideoBackends/OGL/OGLVertexManager.h
+@@ -33,6 +33,10 @@
+ 
+   bool Initialize() override;
+ 
++  // chimera: rebuild the stream buffers on the live GL context after a savestate
++  // load has left their (persistent-mapped) names belonging to a gone context.
++  void RecreateStreamBuffers();
++
+   void UploadUtilityUniforms(const void* uniforms, u32 uniforms_size) override;
+   bool UploadTexelBuffer(const void* data, u32 data_size, TexelBufferFormat format,
+                          u32* out_offset) override;
+@@ -50,6 +54,8 @@
+   void UploadUniforms() override;
+ 
+ private:
++  void CreateStreamBuffers();
++
+   std::unique_ptr<StreamBuffer> m_vertex_buffer;
+   std::unique_ptr<StreamBuffer> m_index_buffer;
+   std::unique_ptr<StreamBuffer> m_texel_buffer;
+diff --git a/Source/Core/VideoCommon/VertexManagerBase.h b/Source/Core/VideoCommon/VertexManagerBase.h
+--- a/Source/Core/VideoCommon/VertexManagerBase.h
++++ b/Source/Core/VideoCommon/VertexManagerBase.h
+@@ -175,6 +175,18 @@
+   // When utility uniforms are used, the GX uniforms need to be re-written afterwards.
+   static void InvalidateConstants();
+ 
++  // chimera: forget the batch in progress without drawing it. A savestate can be
++  // taken mid-batch, and after a load into a fresh GL context its write pointers
++  // point into a stream buffer that is gone; a backend that has just remade its
++  // buffers calls this so the next primitive maps the new one instead of copying
++  // into freed memory. The machine re-issues its commands from the restored
++  // FIFO, and the picture is outside the savestate, so nothing visible is lost.
++  void ChimeraDiscardPendingBatch()
++  {
++    m_is_flushed = true;
++    m_cur_buffer_pointer = m_base_buffer_pointer = m_end_buffer_pointer = nullptr;
++  }
++
+   // Prepares the buffer for the next batch of vertices.
+   virtual void ResetBuffer(u32 vertex_stride);
+ 
+diff --git a/Source/Core/VideoCommon/TextureCacheBase.h b/Source/Core/VideoCommon/TextureCacheBase.h
+--- a/Source/Core/VideoCommon/TextureCacheBase.h
++++ b/Source/Core/VideoCommon/TextureCacheBase.h
+@@ -276,6 +276,15 @@
+   void Cleanup(int _frameCount);
+ 
+   void Invalidate();
++
++  // chimera: drop the staging textures kept for EFB->RAM readback. They are
++  // persistent-mapped, so after a savestate load into a fresh GL context their
++  // map pointers dangle and the next readback copies through them into freed
++  // memory. Called after Invalidate() when the backend rebuilds; the pools
++  // refill on demand. (The readback framebuffer itself is remade by the
++  // framebuffer manager.)
++  void ChimeraDropStagingTextures();
++
+   void ReleaseToPool(TCacheEntry* entry);
+ 
+   TCacheEntry* Load(u32 stage);
+diff --git a/Source/Core/VideoCommon/TextureCacheBase.cpp b/Source/Core/VideoCommon/TextureCacheBase.cpp
+--- a/Source/Core/VideoCommon/TextureCacheBase.cpp
++++ b/Source/Core/VideoCommon/TextureCacheBase.cpp
+@@ -145,6 +145,12 @@
+   m_texture_pool.clear();
+ }
+ 
++void TextureCacheBase::ChimeraDropStagingTextures()
++{
++  m_efb_copy_staging_texture_pool.clear();
++  m_readback_texture.reset();
++}
++
+ void TextureCacheBase::OnConfigChanged(const VideoConfig& config)
+ {
+   if (config.bHiresTextures != m_backup_config.hires_textures ||

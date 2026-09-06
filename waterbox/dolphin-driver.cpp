@@ -350,8 +350,16 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
   return 1;
 }
 
+extern "C" void chimera_dolphin_gl_frame_start(void);
+
 void chimera_dolphin_frame(void)
 {
+  // chimera: before the machine steps, give the OGL backend the chance to
+  // notice its GL context has moved (a savestate loaded into this session) and
+  // rebuild - here nothing is mid-draw. Only when the GPU bridge is in use;
+  // the software renderer has no GL objects to lose.
+  if (chimera_dolphin_gpu_bridge_present && chimera_dolphin_gpu_bridge_present())
+    chimera_dolphin_gl_frame_start();
   // DoFrameStep stores Running before it returns and the machine stores
   // Paused at the end of the next VI field, so waiting for Paused after the
   // call cannot race the step.
