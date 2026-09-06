@@ -31,8 +31,14 @@ fi
 chimera_root="$(cd "$chimera_root" && pwd)"
 [ -n "$mb" ] || mb="$chimera_root/extern/tools/chimera-common-minibox"
 
-# the guest: cmake archives + the adapter, linked by build-core.sh
-[ -d "$root/build/guest" ] || MINIBOX_DIR="$mb" sh "$here/build-guest.sh"
+# The guest (cmake archives + the adapter, linked by build-core.sh). Always
+# rebuilt, never skipped when build/guest already exists: build-guest.sh is
+# idempotent - it re-applies the patches and runs an incremental make - so a
+# stale build/guest (patches or sources changed since it was last made) can
+# never be packaged. set -eu aborts here on ANY guest-build / apply-patches
+# failure, before a single artefact is copied, so a broken guest is never
+# packaged as a fresh core.wbx.
+MINIBOX_DIR="$mb" sh "$here/build-guest.sh"
 MINIBOX_DIR="$mb" sh "$here/build-core.sh" -m "$mb"
 
 staging="$root/build/package-staging"
