@@ -13,20 +13,26 @@ MB      ?= $(HOME)/chimera/extern/chimera-common-minibox
 GLINCS  := -I$(MB)/source/gl -Iglad/include -Igenerated-gl
 CXXFLAGS := -O2 -g1 $(TUFLAGS) -DCHIMERA_GL_BRIDGE $(GLINCS) -I.
 
+# One run of gen-gl-bridge.py writes all three generated files, so naming the
+# .cpp as a prerequisite is what orders every object that includes one of the
+# other two - without it a parallel make compiles gl-host.c before the
+# generator has written gl-bridge-ops.h.
+GEN := generated-gl/gl-bridge-guest.cpp
+
 LIBS := $(shell find $(B) -name '*.a')
 
 all: $(O)/run-native
 
-generated-gl/gl-bridge-guest.cpp: gl-entry-points.txt $(MB)/source/gl/gl-entry-points.txt
+$(GEN): gl-entry-points.txt $(MB)/source/gl/gl-entry-points.txt
 	mkdir -p generated-gl
 	python3 $(MB)/source/gl/gen-gl-bridge.py glad/include/glad/gl.h \
 		$(MB)/source/gl/gl-entry-points.txt generated-gl --only gl-entry-points.txt
 
-$(O)/%.o: %.cpp dolphin-driver.h
+$(O)/%.o: %.cpp dolphin-driver.h $(GEN)
 	@mkdir -p $(O)
 	g++ $(CXXFLAGS) -c -o $@ $<
 
-$(O)/gl-bridge-guest.o: generated-gl/gl-bridge-guest.cpp
+$(O)/gl-bridge-guest.o: $(GEN)
 	@mkdir -p $(O)
 	g++ $(CXXFLAGS) -c -o $@ $<
 
@@ -34,7 +40,7 @@ $(O)/glad-gl.o: glad/src/gl.c
 	@mkdir -p $(O)
 	gcc -O2 $(GLINCS) -c -o $@ $<
 
-$(O)/gl-host.o: gl-host.c
+$(O)/gl-host.o: gl-host.c $(GEN)
 	@mkdir -p $(O)
 	gcc -O2 -DCHIMERA_GL_BRIDGE $(GLINCS) -c -o $@ $<
 
