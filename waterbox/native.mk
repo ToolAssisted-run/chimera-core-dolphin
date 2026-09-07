@@ -9,7 +9,7 @@ B    := $(ROOT)/build/native
 O    := obj-native
 
 TUFLAGS := $(shell python3 extract-tu-flags.py $(B)/compile_commands.json Core/Core.cpp)
-MB      ?= $(HOME)/chimera/extern/tools/chimera-common-minibox
+MB      ?= $(HOME)/chimera/extern/chimera-common-minibox
 GLINCS  := -I$(MB)/source/gl -Iglad/include -Igenerated-gl
 CXXFLAGS := -O2 -g1 $(TUFLAGS) -DCHIMERA_GL_BRIDGE $(GLINCS) -I.
 
