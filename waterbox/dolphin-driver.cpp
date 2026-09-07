@@ -338,6 +338,16 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
                       "GameCube in the New Project wizard's System box"
                     : "the project says GameCube, but this image boots a Wii - pick "
                       "Wii in the New Project wizard's System box";
+      // The machine is up by the time the mismatch is known, and a refusal
+      // that leaves it running is not a refusal: the emu threads outlive
+      // main, and the first static destructor to notice - the async shader
+      // compiler, which asserts on live workers - hangs the process instead
+      // of returning the load error. Put the machine away first.
+      Core::Stop(Sys());
+      WaitForState(Core::State::Uninitialized);
+      Core::Shutdown(Sys());
+      UICommon::ShutdownControllers();
+      UICommon::Shutdown();
       return 0;
     }
   }
