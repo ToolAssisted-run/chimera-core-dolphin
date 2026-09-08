@@ -32,7 +32,7 @@ diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.cpp b/Source/Core/VideoBackend
  #include <string_view>
  
  namespace OGL
-@@ -732,4 +743,99 @@
+@@ -732,4 +743,113 @@
            AbstractTextureFormat::RGBA8};
  }
  
@@ -79,7 +79,21 @@ diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.cpp b/Source/Core/VideoBackend
 +  // Nothing the renderer thought was bound still is.
 +  ProgramShaderCache::InvalidateVertexFormat();
 +  m_current_pipeline = nullptr;
++
++  // ... but the current framebuffer may not be left NULL. The machine draws
++  // through BPFunctions::SetScissorAndViewport as soon as it runs again, and
++  // that asks the renderer for its current framebuffer and dereferences it
++  // without checking:
++  //
++  //   ConvertFramebufferRectangle(target_rc, g_gfx->GetCurrentFramebuffer())
++  //
++  // so a null here is a read of address 0x3c on the first frame after a
++  // savestate is loaded into a session that did not make it - which is exactly
++  // when this function runs. Clear it and then bind the EFB, which is where a
++  // frame starts anyway and which RecreateEFBFramebuffer has just remade; the
++  // clear first is what stops SetFramebuffer taking it for a no-op.
 +  m_current_framebuffer = nullptr;
++  g_framebuffer_manager->BindEFBFramebuffer();
 +  m_current_rasterization_state = RenderState::GetInvalidRasterizationState();
 +  m_current_depth_state = RenderState::GetInvalidDepthState();
 +  m_current_blend_state = RenderState::GetInvalidBlendingState();
