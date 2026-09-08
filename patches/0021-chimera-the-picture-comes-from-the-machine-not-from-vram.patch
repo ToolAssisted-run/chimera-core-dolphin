@@ -1,0 +1,44 @@
+diff --git a/Source/Core/VideoCommon/TextureCacheBase.cpp b/Source/Core/VideoCommon/TextureCacheBase.cpp
+index 7570e1e..2dbaeb1 100644
+--- a/Source/Core/VideoCommon/TextureCacheBase.cpp
++++ b/Source/Core/VideoCommon/TextureCacheBase.cpp
+@@ -1856,8 +1856,23 @@ RcTcacheEntry TextureCacheBase::GetXFBTexture(u32 address, u32 width, u32 height
+     return {};
+   }
+ 
+-  // Do we currently have a mutable version of this XFB copy in VRAM?
+-  RcTcacheEntry entry = GetXFBFromCache(address, width, height, stride);
++  // chimera: NOT from VRAM. A copy of the XFB kept in video memory is the crisp
++  // one - rendered at internal resolution, never round-tripped through the
++  // console's YUV framebuffer - and it exists nowhere in the machine. A
++  // savestate cannot carry it, so a run reopened in another session has only
++  // the RAM decode below, and from that moment draws a different picture than
++  // the run that never stopped: 62% of the pixels 40 frames later, 99.7% after
++  // 240, and it does not recover.
++  //
++  // So the picture always comes from the machine. That is the same rule this
++  // core already applies to the copies themselves (SKIP_XFB_COPY_TO_RAM off,
++  // "the machine's video memory stays machine state"); presenting from VRAM
++  // while hashing RAM was the half that had been left out, and it meant what
++  // you watched was not what the machine held. It costs the upscaled
++  // presentation, which is a fidelity a TAS has no business depending on.
++  RcTcacheEntry entry = g_ActiveConfig.bChimeraXfbFromRamOnly ?
++                            RcTcacheEntry{} :
++                            GetXFBFromCache(address, width, height, stride);
+   if (entry && !entry->IsLocked())
+   {
+     if (entry->is_xfb_container)
+diff --git a/Source/Core/VideoCommon/VideoConfig.h b/Source/Core/VideoCommon/VideoConfig.h
+index e160154..8abb8ff 100644
+--- a/Source/Core/VideoCommon/VideoConfig.h
++++ b/Source/Core/VideoCommon/VideoConfig.h
+@@ -294,6 +294,9 @@ struct VideoConfig final
+   bool bSkipEFBCopyToRam = false;
+   bool bSkipXFBCopyToRam = false;
+   bool bDisableCopyToVRAM = false;
++  // chimera: present the XFB by decoding it from the machine's memory, never
++  // from a copy kept in VRAM - which no savestate can carry. See GetXFBTexture.
++  bool bChimeraXfbFromRamOnly = true;
+   bool bDeferEFBCopies = false;
+   bool bImmediateXFB = false;
+   bool bSkipPresentingDuplicateXFBs = false;
