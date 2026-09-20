@@ -29,13 +29,19 @@ nat() { d="$1"; shift; rm -rf "$work/$d"; "$here/obj-native/run-native" --sys "$
 wbx() { "$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" "$@" 2>/dev/null | grep '^frame'; }
 
 # ---- tier 1: swiss ---------------------------------------------------------
+# -s before every cmp. nat() and wbx() pipe through `grep '^frame'` and drop
+# stderr, so a runner that dies on its first instruction leaves an EMPTY file -
+# and two empty files are byte-identical. Without the -s these two legs read
+# "native deterministic" and "native == sandbox" off a core that never ran.
 nat n1 --frames "$frames" --report 1 "$swiss" > "$work/n1.txt"
 nat n2 --frames "$frames" --report 1 "$swiss" > "$work/n2.txt"
-if cmp -s "$work/n1.txt" "$work/n2.txt"; then PASS "native deterministic at $frames frames"
+if [ ! -s "$work/n1.txt" ]; then FAIL "native run produced no frames at all"
+elif cmp -s "$work/n1.txt" "$work/n2.txt"; then PASS "native deterministic at $frames frames"
 else FAIL "native deterministic at $frames frames"; fi
 
 wbx --frames "$frames" --report 1 "$swiss" > "$work/g1.txt"
-if cmp -s "$work/n1.txt" "$work/g1.txt"; then PASS "native == sandbox at $frames frames (ram, video, audio, lag)"
+if [ ! -s "$work/g1.txt" ]; then FAIL "the sandbox run produced no frames at all"
+elif cmp -s "$work/n1.txt" "$work/g1.txt"; then PASS "native == sandbox at $frames frames (ram, video, audio, lag)"
 else FAIL "native == sandbox at $frames frames"; fi
 
 if "$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" --frames 60 --rewind "$swiss" 2>/dev/null | grep -q "EQUAL"; then
@@ -44,7 +50,7 @@ else FAIL "rewind leg"; fi
 
 wbx --frames 60 --report 1 --rerecord "$swiss" > "$work/rr.txt"
 wbx --frames 60 --report 1 "$swiss" > "$work/pl.txt"
-if cmp -s "$work/rr.txt" "$work/pl.txt"; then PASS "rerecord leg - save+load around every frame changes nothing"
+if [ -s "$work/pl.txt" ] && cmp -s "$work/rr.txt" "$work/pl.txt"; then PASS "rerecord leg - save+load around every frame changes nothing"
 else FAIL "rerecord leg"; fi
 
 nat np --frames 80 --report 1 --press 20:30:7 "$swiss" > "$work/np.txt"
@@ -67,7 +73,7 @@ else FAIL "lag leg - unpolled frames counted"; fi
 for core in interpreter cached-interpreter; do
 	nat "cc-$core" --cpu-core "$core" --frames 120 --report 1 "$swiss" > "$work/cc-n.txt"
 	wbx --settings "{\"cpu_core\":\"$core\"}" --frames 120 --report 1 "$swiss" > "$work/cc-g.txt"
-	if cmp -s "$work/cc-n.txt" "$work/cc-g.txt"; then PASS "cpu core '$core' - native == sandbox at 120 frames"
+	if [ -s "$work/cc-n.txt" ] && cmp -s "$work/cc-n.txt" "$work/cc-g.txt"; then PASS "cpu core '$core' - native == sandbox at 120 frames"
 	else FAIL "cpu core '$core' - flavors differ"; fi
 	wbx --settings "{\"cpu_core\":\"$core\"}" --frames 60 --report 1 --rerecord "$swiss" > "$work/cc-rr.txt"
 	wbx --settings "{\"cpu_core\":\"$core\"}" --frames 60 --report 1 "$swiss" > "$work/cc-pl.txt"
@@ -90,8 +96,15 @@ else FAIL "ports leg"; fi
 rm -rf "$work/gpu-n"
 "$here/obj-native/run-native" --sys "$sys" --user "$work/gpu-n" --renderer opengl \
 	--frames 60 --report 1 "$swiss" 2>"$work/gpu-n.err" | grep '^frame' > "$work/gpu-n.txt"
-if ! [ -s "$work/gpu-n.txt" ]; then
-	SKIP "gpu leg (no GL context: $(grep -m1 'no context' "$work/gpu-n.err" | head -c 60)) - would prove the OGL backend equal across flavors on this driver"
+# A host with no GL is the only thing this leg may SKIP for, and the bridge
+# says so in as many words ("gpu bridge: no context (...)", run-native.cpp).
+# Keying the SKIP on an EMPTY output instead - which is what this did - made
+# every other way the OGL backend can produce no frames read as "this machine
+# has no GPU", which is mode C: absent wearing the costume of unsupported.
+if grep -q 'gpu bridge: no context' "$work/gpu-n.err"; then
+	SKIP "gpu leg ($(grep -m1 'no context' "$work/gpu-n.err" | head -c 60)) - would prove the OGL backend equal across flavors on this driver"
+elif ! [ -s "$work/gpu-n.txt" ]; then
+	FAIL "gpu leg - the host HAS a GL context and the OGL backend still drew no frames ($(grep -v '^\s*$' "$work/gpu-n.err" | tail -1 | head -c 80))"
 else
 	CHIMERA_GPU=1 "$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" \
 		--settings '{"renderer":"opengl-hw"}' --frames 60 --report 1 "$swiss" 2>/dev/null | grep '^frame' > "$work/gpu-g.txt"
@@ -103,7 +116,7 @@ fi
 if [ -f "$disc" ]; then
 	nat d1 --frames "$frames" --report 1 "$disc" > "$work/d1.txt"
 	wbx --frames "$frames" --report 1 "$disc" > "$work/dg.txt"
-	if cmp -s "$work/d1.txt" "$work/dg.txt"; then PASS "disc leg - native == sandbox at $frames frames"
+	if [ -s "$work/d1.txt" ] && cmp -s "$work/d1.txt" "$work/dg.txt"; then PASS "disc leg - native == sandbox at $frames frames"
 	else FAIL "disc leg"; fi
 else
 	SKIP "disc leg (no commercial disc in tests/roms-local) - would prove DiscIO+DVD timing equivalence on a real game"
@@ -116,7 +129,7 @@ fi
 if [ -f "$wiidisc" ]; then
 	nat w1 --frames 60 --report 1 --machine wii "$wiidisc" > "$work/w1.txt"
 	wbx --frames 60 --report 1 --settings '{"machine":"wii"}' "$wiidisc" > "$work/wg.txt"
-	if cmp -s "$work/w1.txt" "$work/wg.txt"; then PASS "wii disc leg - native == sandbox at 60 frames"
+	if [ -s "$work/w1.txt" ] && cmp -s "$work/w1.txt" "$work/wg.txt"; then PASS "wii disc leg - native == sandbox at 60 frames"
 	else FAIL "wii disc leg"; fi
 	wbx --frames 30 --report 1 --rerecord --settings '{"machine":"wii"}' "$wiidisc" > "$work/wrr.txt"
 	wbx --frames 30 --report 1 --settings '{"machine":"wii"}' "$wiidisc" > "$work/wpl.txt"
