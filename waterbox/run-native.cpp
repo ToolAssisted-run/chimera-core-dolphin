@@ -19,6 +19,31 @@ uintptr_t chimera_gl_host_dispatch(uintptr_t op, uintptr_t a, uintptr_t b, uintp
                                    uintptr_t d, uintptr_t e);
 void chimera_dolphin_install_gpu_bridge(uint64_t addr);
 int chimera_dolphin_gpu_bridge_present(void);
+unsigned long chimera_gl_host_unhandled(long* last_op);
+}
+
+// Every call the bridge shrugged at. In this single binary the OGL backend's
+// calls land on gl-host.c's dispatcher exactly as the sandbox's do, so an
+// opcode with no case is answered 0 here too - and 0 is a plausible answer to
+// nearly every opcode, which is how GL_OP_CONTEXT_ID went unanswered in BOTH
+// flavours for as long as it existed while the gpu leg compared them equal.
+// Said out loud so the gate can fail on it instead of the log saying it to
+// nobody.
+static void gl_report_unhandled(void)
+{
+  long last = 0;
+  const unsigned long n = chimera_gl_host_unhandled(&last);
+  if (n == 0)
+    return;
+  fprintf(stderr,
+          "gpu bridge: %lu call(s) to opcodes this host has no case for"
+          " (last: opcode %ld); every one was answered 0\n",
+          n, last);
+  fflush(stderr);
+}
+#else
+static void gl_report_unhandled(void)
+{
 }
 #endif
 
@@ -203,6 +228,7 @@ int main(int argc, char** argv)
              (long long)chimera_dolphin_savedata_size(i));
     }
   }
+  gl_report_unhandled();
   chimera_dolphin_shutdown();
   printf("done\n");
   return 0;

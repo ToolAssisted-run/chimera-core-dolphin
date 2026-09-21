@@ -20,6 +20,31 @@ PASS() { say "PASS: $*"; pass=$((pass+1)); }
 FAIL() { say "FAIL: $*"; fail=$((fail+1)); }
 SKIP() { say "SKIP: $*"; skip=$((skip+1)); }
 
+# bridge_answered FILE...: did the GPU bridge have a case for every opcode the
+# guest sent it? gl-host.c's default arm logs and returns 0, and 0 is a
+# perfectly plausible answer to nearly every question the bridge carries - so a
+# guest that was answered and a guest that was shrugged at look the same, and
+# two flavours that were both shrugged at compare EQUAL.
+#
+# That is not a worry, it is a measurement: GL_OP_CONTEXT_ID (chimera issue
+# #43, the opcode that lets the renderer notice its GL objects belong to a
+# context that is gone) had no case in gl-host.c for as long as the opcode
+# existed, and this gate was green over it. Absent was indistinguishable from
+# working (~/chimera/docs/gates.md, mode C). So no gpu leg may go green over
+# that line: every one runs this first, on each flavour's stderr that went
+# through gl-host.c, and the message names the opcodes.
+bridge_gap=""
+bridge_answered() {
+	bridge_gap=""
+	for f in "$@"; do
+		[ -f "$f" ] || continue
+		grep -q 'has no case' "$f" || continue
+		bridge_gap="the GPU bridge had no case for $(grep -o 'opcode [0-9]*' "$f" | sort -u | tr '\n' ',' | sed 's/,$//; s/,/, /g') and answered 0 ($(basename "$f"))"
+		return 1
+	done
+	return 0
+}
+
 rm -rf "$work"; mkdir -p "$work"
 
 [ -x "$here/obj-native/run-native" ] || { say "run-native missing - make -f native.mk"; exit 2; }
@@ -92,7 +117,11 @@ else FAIL "ports leg"; fi
 # ---- the GPU bridge: a real driver, the same bytes both flavors ------------
 # The GPU is outside the sandbox and different on every machine, so this leg
 # proves equality ON THIS DRIVER only - and SKIPs, not fails, where no GL
-# context exists at all.
+# context exists at all. Both flavours dispatch through gl-host.c here (the
+# native binary installs the same dispatcher), so both stderrs are held to
+# bridge_answered before the frames are compared: two runs shrugged at
+# identically compare equal, and did, 60 times a run, for as long as
+# GL_OP_CONTEXT_ID had no case.
 rm -rf "$work/gpu-n"
 "$here/obj-native/run-native" --sys "$sys" --user "$work/gpu-n" --renderer opengl \
 	--frames 60 --report 1 "$swiss" 2>"$work/gpu-n.err" | grep '^frame' > "$work/gpu-n.txt"
@@ -107,8 +136,9 @@ elif ! [ -s "$work/gpu-n.txt" ]; then
 	FAIL "gpu leg - the host HAS a GL context and the OGL backend still drew no frames ($(grep -v '^\s*$' "$work/gpu-n.err" | tail -1 | head -c 80))"
 else
 	CHIMERA_GPU=1 "$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" \
-		--settings '{"renderer":"opengl-hw"}' --frames 60 --report 1 "$swiss" 2>/dev/null | grep '^frame' > "$work/gpu-g.txt"
-	if cmp -s "$work/gpu-n.txt" "$work/gpu-g.txt"; then PASS "gpu leg - the OGL backend drew, native == sandbox on this driver"
+		--settings '{"renderer":"opengl-hw"}' --frames 60 --report 1 "$swiss" 2>"$work/gpu-g.err" | grep '^frame' > "$work/gpu-g.txt"
+	if ! bridge_answered "$work/gpu-n.err" "$work/gpu-g.err"; then FAIL "gpu leg - $bridge_gap"
+	elif cmp -s "$work/gpu-n.txt" "$work/gpu-g.txt"; then PASS "gpu leg - the OGL backend drew, native == sandbox on this driver, and every opcode the guest sent had a case"
 	else FAIL "gpu leg - flavors differ under the GPU"; fi
 fi
 

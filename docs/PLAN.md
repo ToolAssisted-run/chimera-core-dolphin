@@ -209,3 +209,61 @@ establishes is that the rebuild RUNS after every restore, not that a real game's
 picture is right on real hardware - no wrong picture was reproduced here on any
 core. And it is the only leg that needs an installed package, so it SKIPs when
 there is none, naming what it would have proven.
+
+## The gate's own GL host had no case for the context id (2026-09-21)
+
+Found on rpcs3 (its b1b88fe) and checked here the same morning, with the same
+result. `waterbox/gl-host.c` is the host half of the GPU bridge that THIS
+repository's harness hands a guest - `run-wbx` under `CHIMERA_GPU=1`, and, in
+this core alone, `run-native --renderer opengl` as well, since the single
+binary installs the same dispatcher. It had no case for `GL_OP_CONTEXT_ID`,
+the opcode that exists so `chimera_dolphin_gl_frame_start` can tell that the
+GL names it holds belong to a context that is gone (chimera issue #43), for as
+long as the opcode has existed. The default arm printed `opcode 4 has no case`
+and returned 0, and 0 is the contract's "cannot tell": the backend concluded
+nothing had moved and kept the names. Chimera's real host (gl_bridge.cpp)
+answers the opcode, so the frontend was never affected; the harness that exists
+to stand in for it was.
+
+**Measured before anything was changed.** The gate's gpu leg, 60 frames of
+swiss on llvmpipe: the line printed 60 times per run - once per frame, at the
+top of every advance - in EACH flavour, and the leg PASSED, because two runs
+shrugged at identically produce identical frame lines. With the case present
+the frame lines of both flavours are byte-identical to the runs without it:
+nothing was lost from the command stream, only the answer to the one question
+that makes a restore safe. Absent was indistinguishable from working (chimera
+docs/gates.md, mode C).
+
+**The fix is rpcs3's, all three parts.** The case answers an id minted the way
+the engine mints it (pid and a high-resolution counter carry the per-process
+entropy; `time()` alone would hand two runs in the same second the SAME id);
+the host mints again on every state load through `chimera_gl_host_state_loaded`,
+which run-wbx calls at both of its load sites, because chimera's host does
+(`ce_gl_state_loaded`; this core declares no `video.rebuildOnStateLoad`, so it
+rebuilds) and a load in the runner was otherwise an easier test than a load in
+Chimera. The default arm COUNTS as well as logs, caps its own chatter at eight
+lines, and `chimera_gl_host_unhandled` hands the count to both runners, which
+print it at the end. And `bridge_answered` in run-gate.sh fails the gpu leg
+when either flavour's stderr carries the line - the sandbox's stderr used to go
+to /dev/null there, so it is now kept.
+
+**Proved by breaking it.** With the case label changed to a number nothing
+sends and both runners rebuilt, the full gate said:
+
+    FAIL: gpu leg - the GPU bridge had no case for opcode 4 and answered 0 (gpu-n.err)
+
+With the case back: `PASS: gpu leg - the OGL backend drew, native == sandbox
+on this driver, and every opcode the guest sent had a case`. Gate at the commit: 13 ok, 0 failed, 2 skipped (the two need discs); the
+negative control was 12 ok, 1 failed, 2 skipped, the one failure being the
+leg under test.
+
+**Found on the way.** `obj-native/run-native` did not relink: `dolphin-driver.cpp`
+references `chimera_dolphin_gl_state_loaded`, added to OGLGfx.cpp by 9498b50
+this morning, and `build/native`'s archives predated it. An incremental
+`make -C build/native` rebuilt `libvideoogl.a` and the link went through. The
+native reference the 9498b50 gate ran was the Sep 20 binary, which is fine for
+what that gate measured (the sandbox against the engine) but worth knowing.
+
+**What this does not establish** (gates.md, E): swiss on llvmpipe is neither a
+game nor a driver. The leg proves the dispatcher answered every opcode the
+guest sent, not that a picture is right on real hardware.
