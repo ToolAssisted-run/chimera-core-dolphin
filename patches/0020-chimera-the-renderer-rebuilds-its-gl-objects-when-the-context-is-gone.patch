@@ -32,7 +32,7 @@ diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.cpp b/Source/Core/VideoBackend
  #include <string_view>
  
  namespace OGL
-@@ -732,4 +743,113 @@
+@@ -732,4 +743,153 @@
            AbstractTextureFormat::RGBA8};
  }
  
@@ -118,12 +118,52 @@ diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.cpp b/Source/Core/VideoBackend
 +// the one place nothing is mid-draw and no resource is on the stack, so the
 +// whole backend can be rebuilt at once, covering every path (texture cache,
 +// framebuffer manager, presenter) that issues GL without passing through a
-+// backend setter. A no-op when there is no bridge, or the software renderer is
-+// in use (g_gfx is not an OGLGfx then - the driver only calls this for OGL).
++// backend setter. A no-op when there is no bridge; the driver calls it only
++// when it actually chose the OGL backend, which is what makes the cast below
++// safe (g_gfx is an SWGfx under the software renderer, and the bridge can be
++// live under that too).
++//
++// ZERO MEANT TWO THINGS, AND ONE OF THEM WAS A LIE (chimera issue 126).
++//
++// s_saved_context starts at 0 and is first written by this function, which runs
++// at the top of a frame advance. But Init boots the machine to a PAUSE without
++// running a frame, and the video backend is up by then - so there is one state
++// in every session that carries 0 while the backend's GL objects already exist:
++// the greenzone's frame-0 anchor, taken right after Init. Loading it read that 0
++// as "this machine has never held any GL objects, nothing to rebuild", when what
++// it means is "this state was taken before anyone looked, so it cannot vouch for
++// the objects the driver is holding NOW" - and those are whatever the frames
++// after the anchor left there.
++//
++// Reported on PCSX2 and Maximo: Ghosts to Glory as a corrupt picture when a
++// movie is played from frame 0 or 1 and a clean one from frame 2, which is
++// exactly where TAStudio stops reaching for the anchor (it loads the state
++// BEFORE the frame it is going to). The same code was in every bridged core.
++//
++// So the host's word for it is kept instead of guessed from the number: the
++// engine tells every core when the machine's memory has been replaced
++// (StateLoaded, which the driver forwards below), and after that the stored 0
++// cannot be trusted. Recording the id during Init instead would put it in the
++// SEALED baseline, where no state carries it as a delta, and the cross-session
++// rebuild this function exists for would stop happening; a non-zero "never seen"
++// sentinel fails identically, because the anchor carries whatever the static's
++// initial value is.
++static bool s_chimera_gl_state_loaded = false;
++
++extern "C" void chimera_dolphin_gl_state_loaded(void)
++{
++  s_chimera_gl_state_loaded = true;
++}
++
 +extern "C" void chimera_dolphin_gl_frame_start(void)
 +{
 +  if (!(&chimera_gl_context_id))
 +    return;
++  // Taken and cleared whatever the ids say: it has been read into this decision,
++  // and a flag left standing would rebuild at some later id change for a load
++  // that is long past.
++  const bool after_load = s_chimera_gl_state_loaded;
++  s_chimera_gl_state_loaded = false;
 +  const uint64_t live = chimera_gl_context_id();
 +  // 0 is "cannot tell" - no bridge, or a host older than the question - and a
 +  // renderer that cannot tell must assume the ground has not moved.
@@ -134,7 +174,7 @@ diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.cpp b/Source/Core/VideoBackend
 +  // like everything else: on a fresh load it holds the save session's id, which
 +  // differs from the one now live.
 +  static uint64_t s_saved_context = 0;
-+  if (s_saved_context != 0 && live != s_saved_context)
++  if (live != s_saved_context && (s_saved_context != 0 || after_load))
 +  {
 +    if (OGL::OGLGfx* gfx = OGL::GetOGLGfx())
 +    {

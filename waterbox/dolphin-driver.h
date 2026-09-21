@@ -11,6 +11,7 @@ extern "C" {
 const char* chimera_dolphin_error(void);
 int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* game_path);
 void chimera_dolphin_frame(void);
+void chimera_dolphin_state_loaded(void);
 uint8_t* chimera_dolphin_ram_ptr(void);
 int64_t chimera_dolphin_ram_size(void);
 void chimera_dolphin_shutdown(void);

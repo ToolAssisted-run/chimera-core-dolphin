@@ -148,6 +148,87 @@ else
 	SKIP "wii legs (no Wii disc in tests/roms-local) - would prove IOS HLE + the in-memory NAND across flavors"
 fi
 
+# --- the greenzone's frame-0 anchor rebuilds like any other state (#126) ----
+#
+# On the GPU bridge the OGL backend's objects live in the driver and a savestate
+# carries only their NAMES, so the engine mints a fresh context id on every
+# state load and this core rebuilds when the id it stored beside those objects
+# no longer matches (chimera_dolphin_gl_frame_start, OGLGfx.cpp).
+#
+# One state used to slip through: the greenzone's FRAME-0 ANCHOR, taken right
+# after Init and before the first frame advance. Init boots the machine to a
+# pause without running a frame, so the backend is already up and holding real
+# GL names while the stored id is still its initial ZERO - and zero was read as
+# "nothing to rebuild". The renderer then kept whatever objects the frames after
+# the anchor had left in the driver. It reaches a person because TAStudio goes
+# to a frame by loading the state BEFORE it and emulating one forward, so frames
+# 0 and 1 both load that anchor and frame 2 is the first that does not.
+#
+# What it measures: the calls that cross the bridge on the frame after the
+# restore. A rebuild is over two thousand here against 664 without one, and an
+# idle frame of swiss is under 200, so 1200 is a wide margin rather than a tuned
+# threshold. A restore to frame 0 and a restore to frame 2 must BOTH rebuild -
+# the difference between them was the bug.
+#
+# This is the only leg here that goes through the ENGINE rather than run-wbx,
+# and it has to be: run-wbx's own --rerecord calls wbx_load_state directly, so
+# it never calls StateLoaded and never mints a new context id. It is also the
+# only leg that needs a built and installed package.
+#
+# WHAT IT DOES NOT STAND IN FOR (chimera docs/gates.md, E): swiss is a homebrew
+# file manager, not a game - it draws a menu, so its texture cache never holds
+# much - and llvmpipe is not a driver. What this proves is that the rebuild
+# RUNS, not that a real game's picture is right on real hardware.
+chimera_root=""
+for c in "${CHIMERA_ROOT:-}" "$root/../chimera" "$HOME/chimera"; do
+	if [ -n "$c" ] && [ -x "$c/build/meson-linux/chimera-run" ] &&
+		[ -f "$c/build/Cores/dolphin.chimeraCore" ]; then
+		chimera_root="$c"
+		break
+	fi
+done
+if [ -z "$chimera_root" ]; then
+	SKIP "gl:rebuild-at-zero leg - needs chimera-run and an installed dolphin.chimeraCore (set CHIMERA_ROOT); would prove a greenzone restore rebuilds the GL objects, the frame-0 anchor included"
+else
+	gz="$work/glzero"
+	mkdir -p "$gz"
+	crun="$chimera_root/build/meson-linux/chimera-run"
+	cpkg="$chimera_root/build/Cores/dolphin.chimeraCore"
+	printf '[Input]\nLogKey:#\n' > "$gz/none.txt"
+	glrun() { # <movie> <out> <extra args...>
+		glmovie="$1"; glout="$2"; shift 2
+		CHIMERA_GL_TRACE=1 CHIMERA_GL_STATEAUDIT=1 timeout 600 "$crun" "$cpkg" \
+			"$swiss" "$glmovie" --settings '{"renderer":"opengl-hw"}' \
+			--frames 60 --gpu "$@" > "$glout" 2>&1 || true
+	}
+	# the calls on the first traced frame after the restore
+	afterRestore() {
+		awk '/ce-gl-audit\] restore/ { seen = 1 }
+		     seen && match($0, /\[ce-gl\] frame [0-9]+: [0-9]+ calls/) {
+			s = substr($0, RSTART, RLENGTH); split(s, f, " "); print f[4]; exit }' "$1"
+	}
+	glrun "$gz/none.txt" "$gz/record.log" --record "$gz/movie.txt"
+	if [ ! -s "$gz/movie.txt" ]; then
+		FAIL "gl:rebuild-at-zero leg - could not record a movie to rewind through (see $gz/record.log)"
+	else
+		glrun "$gz/movie.txt" "$gz/rewind0.log" --greenzone 4096 --rewind-loop 0,1
+		glrun "$gz/movie.txt" "$gz/rewind2.log" --greenzone 4096 --rewind-loop 2,1
+		zero="$(afterRestore "$gz/rewind0.log")"
+		two="$(afterRestore "$gz/rewind2.log")"
+		if grep -q "^chimera gl: no context" "$gz/rewind0.log"; then
+			SKIP "gl:rebuild-at-zero leg - this build or this machine gives the bridge no GL context"
+		elif [ -z "$zero" ] || [ -z "$two" ]; then
+			FAIL "gl:rebuild-at-zero leg - no restore was traced (see $gz/rewind0.log and $gz/rewind2.log)"
+		elif [ "$zero" -lt 1200 ]; then
+			FAIL "gl:rebuild-at-zero leg - restoring the frame-0 anchor made $zero GL calls on the next frame, against $two restoring frame 2: the backend was not rebuilt"
+		elif [ "$two" -lt 1200 ]; then
+			FAIL "gl:rebuild-at-zero leg - restoring frame 2 made only $two GL calls on the next frame: the backend was not rebuilt"
+		else
+			PASS "gl:rebuild-at-zero leg - a restore rebuilds the GL objects wherever it lands - $zero calls after frame 0, $two after frame 2"
+		fi
+	fi
+fi
+
 say ""
 say "$pass ok, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]

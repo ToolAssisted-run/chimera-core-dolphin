@@ -131,6 +131,13 @@ ECL_EXPORT void FrameAdvance(uint64_t /*input*/)
   chimera_dolphin_frame();
 }
 
+// Optional export: the engine calls it after every load of the machine, with
+// the machine stopped. See chimera_dolphin_state_loaded in dolphin-driver.cpp.
+ECL_EXPORT void StateLoaded(void)
+{
+  chimera_dolphin_state_loaded();
+}
+
 ECL_EXPORT int InputWasRead(void)
 {
   return chimera_dolphin_input_was_read();

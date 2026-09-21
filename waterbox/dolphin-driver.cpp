@@ -58,6 +58,10 @@ static bool s_memcard_a = true;
 static char s_machine[16];
 static PowerPC::CPUCore s_cpu_core = PowerPC::CPUCore::JIT64;
 static bool s_renderer_opengl;
+// The backend Init actually chose, not the setting: the bridge can be live
+// while a project asked for the software renderer, and the GL hooks below must
+// not run then (g_gfx is an SWGfx and the OGL helper casts it unchecked).
+static bool s_gl_backend;
 static bool s_port_present[4] = {true, false, false, false};
 extern "C" int chimera_dolphin_gpu_bridge_present(void) __attribute__((weak));
 
@@ -203,6 +207,7 @@ public:
     layer->Set(Config::MAIN_FASTMEM_ARENA, false);
     const bool gl = s_renderer_opengl && chimera_dolphin_gpu_bridge_present &&
                     chimera_dolphin_gpu_bridge_present();
+    s_gl_backend = gl;
     layer->Set(Config::MAIN_GFX_BACKEND, std::string(gl ? "OGL" : "Software Renderer"));
     if (gl)
     {
@@ -361,14 +366,30 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
 }
 
 extern "C" void chimera_dolphin_gl_frame_start(void);
+extern "C" void chimera_dolphin_gl_state_loaded(void);
+
+/* Told after every load of the machine - a savestate, a branch file, a
+ * greenzone restore - with the machine stopped and before it runs again. The
+ * only thing this core keeps that a load invalidates is the OGL backend's claim
+ * about which GL context its objects came from, and the claim a state made
+ * BEFORE anyone looked is the one that was believed and should not have been
+ * (chimera issue 126; see OGLGfx.cpp). Set after the load, so the load cannot
+ * wipe it. */
+void chimera_dolphin_state_loaded(void)
+{
+  if (s_gl_backend)
+    chimera_dolphin_gl_state_loaded();
+}
 
 void chimera_dolphin_frame(void)
 {
   // chimera: before the machine steps, give the OGL backend the chance to
   // notice its GL context has moved (a savestate loaded into this session) and
-  // rebuild - here nothing is mid-draw. Only when the GPU bridge is in use;
-  // the software renderer has no GL objects to lose.
-  if (chimera_dolphin_gpu_bridge_present && chimera_dolphin_gpu_bridge_present())
+  // rebuild - here nothing is mid-draw. Only when the OGL BACKEND is the one
+  // running: the software renderer has no GL objects to lose, and a project can
+  // ask for it while the bridge is live, in which case g_gfx is an SWGfx and the
+  // helper's cast would be a lie.
+  if (s_gl_backend)
     chimera_dolphin_gl_frame_start();
   // DoFrameStep stores Running before it returns and the machine stores
   // Paused at the end of the next VI field, so waiting for Paused after the
