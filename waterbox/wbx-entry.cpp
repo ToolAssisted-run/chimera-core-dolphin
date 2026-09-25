@@ -74,6 +74,29 @@ ECL_EXPORT int Init(void)
   chimera_dolphin_set_machine(machine);
   chimera_dolphin_set_memcard_a(wbx_setting_bool("memcard_a", 1));
   chimera_dolphin_set_widescreen(wbx_setting_bool("widescreen", 0));
+  // a Wii's saves arrive as a .zip in the Save data slot; a GameCube's are
+  // its card images, which the machine opens by name itself
+  {
+    char sd[256] = "";
+    if (wbx_slot_first("savedata", sd, sizeof sd) && strlen(sd) > 4 &&
+        strcmp(sd + strlen(sd) - 4, ".zip") == 0)
+    {
+      // the slot names the file; a save may be mounted under that name, at
+      // the root, or under savedata/ where the machine opens its cards
+      char path[300];
+      const char* forms[] = {"%s", "/%s", "savedata/%s"};
+      for (const char* form : forms)
+      {
+        snprintf(path, sizeof path, form, sd);
+        if (FILE* f = fopen(path, "rb"))
+        {
+          fclose(f);
+          break;
+        }
+      }
+      chimera_dolphin_set_wii_savedata(path);
+    }
+  }
   char cpuCore[32] = "jit";
   wbx_setting_str("cpu_core", cpuCore, sizeof cpuCore);
   chimera_dolphin_set_cpu_core(cpuCore);

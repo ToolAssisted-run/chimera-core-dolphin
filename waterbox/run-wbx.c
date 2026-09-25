@@ -214,7 +214,22 @@ int main(int argc, char **argv)
 		if (r.error_message[0]) { fprintf(stderr, "mount settings: %s\n", r.error_message); return 1; }
 	}
 
-	/* prior saves, mounted at exactly the path the machine opens */
+	/* prior saves, mounted at exactly the path the machine opens, and named in
+	 * a "slots" map the way a project names its Save data slot */
+	char slotsJson[2048] = "{\"savedata\":[";
+	for (int i = 0; i < nsaves; i++) {
+		const char *eq = strchr(saves[i], '=');
+		if (eq) {
+			size_t used = strlen(slotsJson);
+			snprintf(slotsJson + used, sizeof slotsJson - used, "%s\"%.*s\"", i ? "," : "", (int)(eq - saves[i]), saves[i]);
+		}
+	}
+	strncat(slotsJson, "]}", sizeof slotsJson - strlen(slotsJson) - 1);
+	memreader slotsReader = { (const uint8_t *)slotsJson, strlen(slotsJson), 0 };
+	if (nsaves > 0) {
+		wbx_mount_file(h, "slots", mem_reader, (uintptr_t)&slotsReader, false, &r);
+		if (r.error_message[0]) { fprintf(stderr, "mount slots: %s\n", r.error_message); return 1; }
+	}
 	for (int i = 0; i < nsaves; i++) {
 		char id[256]; const char *eq = strchr(saves[i], '=');
 		if (!eq || eq == saves[i] || (size_t)(eq - saves[i]) >= sizeof id - 10) { fprintf(stderr, "bad --save %s (want name=path)\n", saves[i]); return 2; }

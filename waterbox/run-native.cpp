@@ -118,6 +118,8 @@ int main(int argc, char** argv)
       for (int pi = 0; pi < 4 && mask[pi]; pi++)
         chimera_dolphin_set_port(pi, mask[pi] == '1');
     }
+    else if (!strcmp(argv[i], "--wii-savedata") && i + 1 < argc)
+      chimera_dolphin_set_wii_savedata(argv[++i]);
     else if (!strcmp(argv[i], "--widescreen"))
       chimera_dolphin_set_widescreen(1);
     else if (!strcmp(argv[i], "--renderer") && i + 1 < argc)

@@ -40,6 +40,11 @@
 #include "VideoCommon/VideoBackendBase.h"
 #include "VideoCommon/VideoConfig.h"
 #include "UICommon/UICommon.h"
+#include "Common/NandPaths.h"
+#include "Core/IOS/FS/FileSystem.h"
+#include "Core/IOS/IOS.h"
+#include "Core/IOS/Uids.h"
+#include "zip-reader.h"
 
 #include "dolphin-driver.h"
 
@@ -275,6 +280,116 @@ static Core::System& Sys()
   return Core::System::GetInstance();
 }
 
+static bool WaitForState(Core::State want);
+
+// The machine is up by the time a load error is known, and a refusal that
+// leaves it running is not a refusal: the emu threads outlive main, and the
+// first static destructor to notice - the async shader compiler, which asserts
+// on live workers - hangs the process instead of returning the load error. Put
+// the machine away first. Returns Init's failure value.
+static int RefuseRunningMachine()
+{
+  Core::Stop(Sys());
+  WaitForState(Core::State::Uninitialized);
+  Core::Shutdown(Sys());
+  UICommon::ShutdownControllers();
+  UICommon::Shutdown();
+  return 0;
+}
+
+// ---- a Wii's saves, taken back in (chimera#147) ------------------------------
+// A Wii keeps a game's saves in NAND under /title/<id>/data, and Export Save
+// Data hands them out as nand/<NAND path>. A Wii project's Save data slot takes
+// that .zip back: its files go into the booted game's data directory once the
+// boot has made it (ES_DIVerify creates it and gives it to the game's uid and
+// gid), before the game runs a single instruction and before the machine is
+// sealed - so the saves are baseline, and a savestate carries only what the
+// game writes afterwards. Each file is the game's own: created as its uid and
+// gid, with the modes the data directory has. Anything that is not this
+// game's save is refused rather than ignored - a project that carries someone's
+// progress and silently starts from nothing is worse than one that will not
+// load (chimera docs/save-data.md).
+static std::string s_wii_savedata_zip;
+
+static bool SeedWiiSaves()
+{
+  if (s_wii_savedata_zip.empty())
+    return true;
+  if (!Sys().IsWii())
+  {
+    s_error = "the Save data slot holds a .zip, which is a Wii's saves; a GameCube project "
+              "takes the memory card image (.raw) Export Save Data writes";
+    return false;
+  }
+  auto index = std::make_shared<chimera::zip_index>();
+  std::string error;
+  if (!chimera::zip_open(s_wii_savedata_zip, *index, error))
+  {
+    s_error = "the save data could not be read as a zip: " + error;
+    return false;
+  }
+
+  using namespace IOS::HLE;
+  using IOS::PID_KERNEL;
+  const u64 title = SConfig::GetInstance().GetTitleID();
+  const std::string data_dir = Common::GetTitleDataPath(title);
+  const std::string prefix = "nand" + data_dir + "/";
+  const auto fs = Sys().GetIOS()->GetFS();
+  const auto owner = fs->GetMetadata(PID_KERNEL, PID_KERNEL, data_dir);
+  if (!owner || owner->is_file)
+  {
+    s_error = "the game has no data directory in NAND to put its saves in (" + data_dir + ")";
+    return false;
+  }
+
+  size_t files = 0;
+  for (size_t i = 0; i < index->entries.size(); i++)
+  {
+    const auto& e = index->entries[i];
+    if (e.path.empty() || e.path.back() == '/')
+      continue;  // a directory entry: the files under it make it
+    if (e.path.compare(0, prefix.size(), prefix) != 0 || e.path.find("..") != std::string::npos)
+    {
+      s_error = "the save data holds '" + e.path + "', which is not a save of this game - every "
+                "entry is " + prefix + "<file>, as Export Save Data writes them for this game";
+      return false;
+    }
+    std::vector<u8> bytes(e.size);
+    chimera::zip_stream stream(index, i);
+    if (stream.read_at(0, bytes.data(), e.size) != e.size)
+    {
+      s_error = "the save data's '" + e.path + "' could not be unpacked";
+      return false;
+    }
+    const std::string path = e.path.substr(4);  // "/title/.../data/..."
+    // the folders between the data directory and the file are the game's too
+    for (size_t slash = data_dir.size() + 1; (slash = path.find('/', slash)) != std::string::npos; slash++)
+    {
+      const std::string dir = path.substr(0, slash);
+      fs->CreateDirectory(owner->uid, owner->gid, dir, 0, owner->modes);  // may exist
+    }
+    const auto file = fs->CreateAndOpenFile(owner->uid, owner->gid, path, owner->modes);
+    if (!file || !file->Write(bytes.data(), bytes.size()))
+    {
+      s_error = "the save data's '" + e.path + "' could not be written to NAND";
+      return false;
+    }
+    files++;
+  }
+  if (files == 0)
+  {
+    s_error = "the save data zip holds no files";
+    return false;
+  }
+  fprintf(stderr, "[driver] seeded %zu Wii save file(s) into %s\n", files, data_dir.c_str());
+  return true;
+}
+
+void chimera_dolphin_set_wii_savedata(const char* zip_path)
+{
+  s_wii_savedata_zip = zip_path ? zip_path : "";
+}
+
 // Pump host-side jobs until the machine reports the wanted state. Under
 // miniBox green threads the yield is what lets the EmuThread run at all.
 // Returns false if the machine instead lands in a terminal state - a boot
@@ -365,19 +480,12 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
                       "GameCube in the New Project wizard's System box"
                     : "the project says GameCube, but this image boots a Wii - pick "
                       "Wii in the New Project wizard's System box";
-      // The machine is up by the time the mismatch is known, and a refusal
-      // that leaves it running is not a refusal: the emu threads outlive
-      // main, and the first static destructor to notice - the async shader
-      // compiler, which asserts on live workers - hangs the process instead
-      // of returning the load error. Put the machine away first.
-      Core::Stop(Sys());
-      WaitForState(Core::State::Uninitialized);
-      Core::Shutdown(Sys());
-      UICommon::ShutdownControllers();
-      UICommon::Shutdown();
-      return 0;
+      return RefuseRunningMachine();
     }
   }
+  // the saves the project starts from, before the machine is sealed
+  if (!SeedWiiSaves())
+    return RefuseRunningMachine();
   fprintf(stderr, "[driver] video backend: %s\n",
           g_video_backend ? g_video_backend->GetConfigName().c_str() : "(none)");
   // NullSound zeroes the mixer's output rate so nothing consumes samples;
@@ -638,6 +746,15 @@ void chimera_dolphin_set_cpu_core(const char* name)
     s_cpu_core = PowerPC::CPUCore::Interpreter;
 }
 
+// A Wii's saves are its NAND's; the GameCube card slot a Wii also has is not
+// where a Wii game saves, and exporting its blank image only confused (#147).
+static int CardCount()
+{
+  if (Sys().IsWii())
+    return 0;
+  return (s_memcard[0].data ? 1 : 0) + (s_memcard[1].data ? 1 : 0);
+}
+
 int chimera_dolphin_savedata_count(void)
 {
   s_nand_saves.clear();
@@ -648,18 +765,19 @@ int chimera_dolphin_savedata_count(void)
     for (auto& [path, data] : files)
       s_nand_saves.push_back({"nand/" + path, data});
   }
-  return (s_memcard[0].data ? 1 : 0) + (s_memcard[1].data ? 1 : 0) + static_cast<int>(s_nand_saves.size());
+  return CardCount() + static_cast<int>(s_nand_saves.size());
 }
 
 static const NandSave* NandSaveAt(int i)
 {
-  const int cards = (s_memcard[0].data ? 1 : 0) + (s_memcard[1].data ? 1 : 0);
-  i -= cards;
+  i -= CardCount();
   return (i >= 0 && i < static_cast<int>(s_nand_saves.size())) ? &s_nand_saves[i] : nullptr;
 }
 
 static const MemcardReg* SavedataAt(int i)
 {
+  if (Sys().IsWii())
+    return nullptr;
   for (int slot = 0; slot < 2; slot++)
   {
     if (!s_memcard[slot].data)

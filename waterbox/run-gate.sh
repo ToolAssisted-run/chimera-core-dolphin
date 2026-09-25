@@ -183,14 +183,36 @@ if [ -f "$wiidisc" ]; then
 	if [ ! -s "$work/ww.txt" ] || ! cmp -s "$work/ww.txt" "$work/wwg.txt"; then FAIL "widescreen leg - native vs sandbox"
 	elif cmp -s "$work/ww.txt" "$work/w4.txt"; then FAIL "widescreen leg - the setting changed nothing in the machine"
 	else PASS "widescreen leg - the SYSCONF setting reaches the machine, native == sandbox"; fi
-	# a Wii keeps its saves in NAND (chimera#147): what the export hands out -
-	# the card and every game title's data file - is the same in both flavors
-	rm -rf "$work/sdn" "$work/sdw"; mkdir -p "$work/sdn" "$work/sdw"
-	"$here/obj-native/run-native" --sys "$sys" --user "$work/wsn" --machine wii --frames 60 --savedata-out "$work/sdn" "$wiidisc" >/dev/null 2>&1
-	"$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" --frames 60 --settings '{"machine":"wii"}' --savedata-out "$work/sdw" "$wiidisc" >/dev/null 2>&1
-	if [ -z "$(ls -A "$work/sdn")" ]; then FAIL "wii savedata leg - nothing exported"
-	elif diff -r "$work/sdn" "$work/sdw" >/dev/null; then PASS "wii savedata leg - native and sandbox export the same files ($(cd "$work/sdn" && find . -type f | wc -l))"
-	else FAIL "wii savedata leg - native and sandbox export different files"; fi
+	# a Wii's saves, out and back in (chimera#147). A zip for no game at all is
+	# refused, and the refusal names the path this disc's saves live at; a zip
+	# built for that path goes into NAND before the game runs and comes back
+	# out of the export byte for byte, the same in both flavors.
+	python3 - "$work" <<'PYZIP'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1] + "/nobody.zip", "w") as z:
+    z.writestr("nand/title/00010000/00000000/data/x.dat", b"x")
+PYZIP
+	refusal="$("$here/obj-native/run-native" --sys "$sys" --user "$work/wr" --machine wii --wii-savedata "$work/nobody.zip" --frames 1 "$wiidisc" 2>&1 | grep -o 'every entry is nand/title/[0-9a-f]*/[0-9a-f]*/data/')"
+	boxref="$("$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" --frames 1 --settings '{"machine":"wii"}' --save nobody.zip="$work/nobody.zip" "$wiidisc" 2>&1 | grep -o 'every entry is nand/title/[0-9a-f]*/[0-9a-f]*/data/')"
+	if [ -z "$refusal" ] || [ "$refusal" != "$boxref" ]; then FAIL "wii save refusal leg - another game's save was not refused the same way in both flavors"
+	else
+		PASS "wii save refusal leg - another game's save is a load error, native == sandbox"
+		prefix="${refusal#every entry is }"
+		python3 - "$work" "$prefix" <<'PYZIP'
+import sys, zipfile
+work, prefix = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(work + "/seed.zip", "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr(prefix + "profile.dat", bytes((i * 7 + 3) & 255 for i in range(5000)))
+    z.writestr(prefix + "sub/extra.bin", b"hello wii")
+PYZIP
+		rm -rf "$work/sdn" "$work/sdw" "$work/seed"; mkdir -p "$work/sdn" "$work/sdw" "$work/seed"
+		(cd "$work/seed" && python3 -c "import zipfile; zipfile.ZipFile('../seed.zip').extractall('.')")
+		"$here/obj-native/run-native" --sys "$sys" --user "$work/wsn" --machine wii --wii-savedata "$work/seed.zip" --frames 60 --savedata-out "$work/sdn" "$wiidisc" >/dev/null 2>&1
+		"$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" --frames 60 --settings '{"machine":"wii"}' --save seed.zip="$work/seed.zip" --savedata-out "$work/sdw" "$wiidisc" >/dev/null 2>&1
+		if ! diff -r "$work/seed" "$work/sdn" >/dev/null; then FAIL "wii save round-trip leg - what went in is not what the export gave back"
+		elif ! diff -r "$work/sdn" "$work/sdw" >/dev/null; then FAIL "wii save round-trip leg - native and sandbox export different files"
+		else PASS "wii save round-trip leg - seeded into NAND, exported back byte for byte, native == sandbox"; fi
+	fi
 else
 	SKIP "wii legs (no Wii disc in tests/roms-local) - would prove IOS HLE + the in-memory NAND across flavors"
 fi

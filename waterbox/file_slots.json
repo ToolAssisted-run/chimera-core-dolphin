@@ -1,33 +1,30 @@
 {
-  "_comment": "The core-declared file form for chimera's project wizard: a GameCube project is one game (a disc image or a homebrew executable), and whatever the machine is to start with already written on its card. No firmware appears here - a GameCube boots without any dump (the IPL is emulated in software and the free DSP roms ship inside this package).",
-  "slots": [
-    {
-      "id": "game",
-      "title": "Game",
-      "min": 1,
-      "max": 1,
-      "formats": [
-        "iso",
-        "gcm",
-        "rvz",
-        "dol",
-        "elf"
-      ],
-      "help": "The disc image (.iso/.gcm, or dolphin's own .rvz), or a homebrew executable (.dol/.elf) booted directly the way a modded console would."
-    },
-    {
-      "id": "savedata",
-      "title": "Save data",
-      "min": 0,
-      "max": 2,
-      "formats": [
-        "raw"
-      ],
-      "help": "What the machine starts with already saved: the raw memory card image Emulator > Export Save Data... writes, put back under the same name (MemoryCardA.USA.raw, .EUR., or .JAP. following the game's region) so a run can continue from where another left off. It is mounted read-only and pinned by hash, and the movie cites it. Leave it empty and the machine formats a blank card at boot, which is a new console.",
-      "exposedWhen": {
-        "setting": "machine",
-        "is": "gamecube"
-      }
-    }
-  ]
+ "_comment": "The core-declared file form for chimera's project wizard: a GameCube project is one game (a disc image or a homebrew executable), and whatever the machine is to start with already written on its card. No firmware appears here - a GameCube boots without any dump (the IPL is emulated in software and the free DSP roms ship inside this package).",
+ "slots": [
+  {
+   "id": "game",
+   "title": "Game",
+   "min": 1,
+   "max": 1,
+   "formats": [
+    "iso",
+    "gcm",
+    "rvz",
+    "dol",
+    "elf"
+   ],
+   "help": "The disc image (.iso/.gcm, or dolphin's own .rvz), or a homebrew executable (.dol/.elf) booted directly the way a modded console would."
+  },
+  {
+   "id": "savedata",
+   "title": "Save data",
+   "min": 0,
+   "max": 2,
+   "formats": [
+    "raw",
+    "zip"
+   ],
+   "help": "What the machine starts with already saved - put back exactly what Emulator > Export Save Data... wrote, so a run can continue from where another left off. It is mounted read-only and pinned by hash, and the movie cites it. GameCube: the raw memory card image, under the same name (MemoryCardA.USA.raw, .EUR., or .JAP. following the game's region); leave it empty and the machine formats a blank card at boot. Wii: the .zip Export Save Data writes (its files are nand/title/.../data/..., the game's own saves from the console's NAND); they go into the game's save directory before it starts. A save of a different game is refused rather than ignored."
+  }
+ ]
 }
