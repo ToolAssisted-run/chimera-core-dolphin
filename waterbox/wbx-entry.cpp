@@ -73,6 +73,7 @@ ECL_EXPORT int Init(void)
   wbx_setting_str("machine", machine, sizeof machine);
   chimera_dolphin_set_machine(machine);
   chimera_dolphin_set_memcard_a(wbx_setting_bool("memcard_a", 1));
+  chimera_dolphin_set_widescreen(wbx_setting_bool("widescreen", 0));
   char cpuCore[32] = "jit";
   wbx_setting_str("cpu_core", cpuCore, sizeof cpuCore);
   chimera_dolphin_set_cpu_core(cpuCore);

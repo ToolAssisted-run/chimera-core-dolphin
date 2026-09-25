@@ -3,6 +3,7 @@
 // is the determinism check; the guest printing them too is M1.
 // SPDX-License-Identifier: MIT
 
+#include <sys/stat.h>
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
@@ -73,6 +74,15 @@ static uint64_t fnv(const uint8_t* p, int64_t n)
   return h;
 }
 
+
+/* A save's name may be a path ("nand/title/..." for a Wii's NAND saves), so
+ * its folders are made first, the way the engine's export makes them. */
+static void MakeParents(char *path)
+{
+	for (char *p = path + 1; *p; p++)
+		if (*p == '/') { *p = 0; mkdir(path, 0755); *p = '/'; }
+}
+
 int main(int argc, char** argv)
 {
   const char* game = nullptr;
@@ -108,6 +118,8 @@ int main(int argc, char** argv)
       for (int pi = 0; pi < 4 && mask[pi]; pi++)
         chimera_dolphin_set_port(pi, mask[pi] == '1');
     }
+    else if (!strcmp(argv[i], "--widescreen"))
+      chimera_dolphin_set_widescreen(1);
     else if (!strcmp(argv[i], "--renderer") && i + 1 < argc)
     {
       const char* r = argv[++i];
@@ -216,6 +228,7 @@ int main(int argc, char** argv)
     {
       char path[1024];
       snprintf(path, sizeof path, "%s/%s", savedata_out, chimera_dolphin_savedata_name(i));
+      MakeParents(path);
       FILE* f = fopen(path, "wb");
       if (!f)
       {

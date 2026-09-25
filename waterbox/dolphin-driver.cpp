@@ -9,6 +9,8 @@
 #include <ctime>
 #include <cstring>
 #include <string>
+#include <utility>
+#include <vector>
 #include <thread>
 
 #include "Common/FileUtil.h"
@@ -20,6 +22,7 @@
 #include "Core/Boot/Boot.h"
 #include "Core/BootManager.h"
 #include "Core/Config/MainSettings.h"
+#include "Core/Config/SYSCONFSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/HW/DSP.h"
@@ -54,6 +57,11 @@ struct PadWire
 static PadWire s_pad[4];
 static bool s_input_read;
 static bool s_memcard_a = true;
+// The Wii's "Screen: Widescreen" system setting, which a Wii game reads from
+// its SYSCONF to choose 16:9 or 4:3 (chimera#147). Part of the machine: the
+// game draws differently, so a movie records it. A GameCube has no such
+// setting and ignores it.
+static bool s_widescreen = false;
 // which console the project declares ("gamecube"/"wii"); empty = don't check
 static char s_machine[16];
 static PowerPC::CPUCore s_cpu_core = PowerPC::CPUCore::JIT64;
@@ -90,6 +98,17 @@ struct MemcardReg
   uint32_t size = 0;
 };
 static MemcardReg s_memcard[2];
+
+// A Wii keeps its saves in NAND, not on a card: every file under a title's
+// data directory is exported too, named "nand/<NAND path>" (chimera#147).
+// Taken as a snapshot by the count, as the export contract asks.
+void Chimera_ListNandSaves(std::vector<std::pair<std::string, const std::vector<u8>*>>& out);
+struct NandSave
+{
+  std::string name;
+  const std::vector<u8>* data;
+};
+static std::vector<NandSave> s_nand_saves;
 
 extern "C" void Chimera_RegisterMemcard(int slot, const char* filename, uint8_t* data,
                                         uint32_t size)
@@ -235,6 +254,9 @@ public:
     // the machine's clock belongs to the machine: a fixed epoch, never the host
     layer->Set(Config::MAIN_CUSTOM_RTC_ENABLE, true);
     layer->Set(Config::MAIN_CUSTOM_RTC_VALUE, u32(946684800));
+    // BootManager writes the SYSCONF settings into the NAND's SYSCONF file
+    // before the game starts, so the game reads this as the console's own
+    layer->Set(Config::SYSCONF_WIDESCREEN, s_widescreen);
     // the cards live at a fixed relative path: the frontend mounts prior
     // saves there, the export names match, and no host user dir leaks in
     layer->Set(Config::MAIN_MEMCARD_A_PATH, std::string("savedata/MemoryCardA.raw"));
@@ -576,6 +598,11 @@ void chimera_dolphin_set_machine(const char* name)
   snprintf(s_machine, sizeof s_machine, "%s", name ? name : "");
 }
 
+void chimera_dolphin_set_widescreen(int on)
+{
+  s_widescreen = on != 0;
+}
+
 void chimera_dolphin_set_memcard_a(int present)
 {
   s_memcard_a = present != 0;
@@ -613,7 +640,22 @@ void chimera_dolphin_set_cpu_core(const char* name)
 
 int chimera_dolphin_savedata_count(void)
 {
-  return (s_memcard[0].data ? 1 : 0) + (s_memcard[1].data ? 1 : 0);
+  s_nand_saves.clear();
+  if (Sys().IsWii())
+  {
+    std::vector<std::pair<std::string, const std::vector<u8>*>> files;
+    Chimera_ListNandSaves(files);
+    for (auto& [path, data] : files)
+      s_nand_saves.push_back({"nand/" + path, data});
+  }
+  return (s_memcard[0].data ? 1 : 0) + (s_memcard[1].data ? 1 : 0) + static_cast<int>(s_nand_saves.size());
+}
+
+static const NandSave* NandSaveAt(int i)
+{
+  const int cards = (s_memcard[0].data ? 1 : 0) + (s_memcard[1].data ? 1 : 0);
+  i -= cards;
+  return (i >= 0 && i < static_cast<int>(s_nand_saves.size())) ? &s_nand_saves[i] : nullptr;
 }
 
 static const MemcardReg* SavedataAt(int i)
@@ -631,20 +673,26 @@ static const MemcardReg* SavedataAt(int i)
 
 const char* chimera_dolphin_savedata_name(int i)
 {
-  const MemcardReg* r = SavedataAt(i);
-  return r ? r->name.c_str() : nullptr;
+  if (const MemcardReg* r = SavedataAt(i))
+    return r->name.c_str();
+  const NandSave* n = NandSaveAt(i);
+  return n ? n->name.c_str() : nullptr;
 }
 
 int64_t chimera_dolphin_savedata_size(int i)
 {
-  const MemcardReg* r = SavedataAt(i);
-  return r ? r->size : 0;
+  if (const MemcardReg* r = SavedataAt(i))
+    return r->size;
+  const NandSave* n = NandSaveAt(i);
+  return n ? static_cast<int64_t>(n->data->size()) : 0;
 }
 
 const uint8_t* chimera_dolphin_savedata_buffer(int i)
 {
-  const MemcardReg* r = SavedataAt(i);
-  return r ? r->data : nullptr;
+  if (const MemcardReg* r = SavedataAt(i))
+    return r->data;
+  const NandSave* n = NandSaveAt(i);
+  return n ? n->data->data() : nullptr;
 }
 
 uint8_t* chimera_dolphin_ram_ptr(void)

@@ -11,7 +11,7 @@ frames="${1:-120}"
 sys="$root/extern/dolphin/Data/Sys"
 swiss="$root/tests/roms/swiss_r2092.dol"
 disc="$root/tests/roms-local/Mortal Kombat - Deadly Alliance.iso"
-wiidisc="$root/tests/roms-local/Dragon Ball Z - Budokai Tenkaichi 3 (USA) (Rev 1).iso"
+wiidisc="${DOLPHIN_WII_DISC:-$root/tests/roms-local/Dragon Ball Z - Budokai Tenkaichi 3 (USA) (Rev 1).iso}"
 work="$here/tests/work"
 pass=0; fail=0; skip=0
 
@@ -174,6 +174,23 @@ if [ -f "$wiidisc" ]; then
 	else
 		PASS "machine leg - a Wii image in a GameCube project is a load error"
 	fi
+	# the Wii's widescreen system setting (chimera#147) is part of the machine:
+	# the game reads it from SYSCONF, so it must change the run, and both
+	# flavors must agree on how
+	nat ww --frames 120 --report 120 --machine wii --widescreen "$wiidisc" > "$work/ww.txt"
+	wbx --frames 120 --report 120 --settings '{"machine":"wii","widescreen":true}' "$wiidisc" > "$work/wwg.txt"
+	nat w4 --frames 120 --report 120 --machine wii "$wiidisc" > "$work/w4.txt"
+	if [ ! -s "$work/ww.txt" ] || ! cmp -s "$work/ww.txt" "$work/wwg.txt"; then FAIL "widescreen leg - native vs sandbox"
+	elif cmp -s "$work/ww.txt" "$work/w4.txt"; then FAIL "widescreen leg - the setting changed nothing in the machine"
+	else PASS "widescreen leg - the SYSCONF setting reaches the machine, native == sandbox"; fi
+	# a Wii keeps its saves in NAND (chimera#147): what the export hands out -
+	# the card and every game title's data file - is the same in both flavors
+	rm -rf "$work/sdn" "$work/sdw"; mkdir -p "$work/sdn" "$work/sdw"
+	"$here/obj-native/run-native" --sys "$sys" --user "$work/wsn" --machine wii --frames 60 --savedata-out "$work/sdn" "$wiidisc" >/dev/null 2>&1
+	"$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" --frames 60 --settings '{"machine":"wii"}' --savedata-out "$work/sdw" "$wiidisc" >/dev/null 2>&1
+	if [ -z "$(ls -A "$work/sdn")" ]; then FAIL "wii savedata leg - nothing exported"
+	elif diff -r "$work/sdn" "$work/sdw" >/dev/null; then PASS "wii savedata leg - native and sandbox export the same files ($(cd "$work/sdn" && find . -type f | wc -l))"
+	else FAIL "wii savedata leg - native and sandbox export different files"; fi
 else
 	SKIP "wii legs (no Wii disc in tests/roms-local) - would prove IOS HLE + the in-memory NAND across flavors"
 fi

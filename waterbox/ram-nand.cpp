@@ -505,3 +505,21 @@ extern "C" IOS::HLE::FS::FileSystem* Chimera_MakeNandFilesystem()
 {
   return new RamFileSystem();
 }
+
+// The saves a Wii game wrote, for the savedata export (chimera#147): every file
+// under the data directory of a GAME's title - /title/0001000x/..., the disc
+// games, channels and their DLC; the System Menu and IOS live under
+// /title/00000001 and are the console's, not the player's - in the store's own
+// (sorted) order, named by its NAND path without the leading slash. The pointers are the store's own
+// bytes, valid until the machine next runs - which is exactly the export
+// contract (docs/save-data.md in chimera).
+void Chimera_ListNandSaves(std::vector<std::pair<std::string, const std::vector<u8>*>>& out)
+{
+  out.clear();
+  for (const auto& [path, node] : TheStore().nodes)
+  {
+    if (!node.is_file || path.rfind("/title/0001000", 0) != 0 || path.find("/data/") == std::string::npos)
+      continue;
+    out.emplace_back(path.substr(1), &node.data);
+  }
+}

@@ -138,6 +138,15 @@ static int mountTree(mb_host *h, const char *guestPrefix, const char *hostDir)
 	return 0;
 }
 
+
+/* A save's name may be a path ("nand/title/..." for a Wii's NAND saves), so
+ * its folders are made first, the way the engine's export makes them. */
+static void MakeParents(char *path)
+{
+	for (char *p = path + 1; *p; p++)
+		if (*p == '/') { *p = 0; mkdir(path, 0755); *p = '/'; }
+}
+
 int main(int argc, char **argv)
 {
 	const char *core = NULL, *game = NULL, *sysdir = NULL, *ramOut = NULL, *savedataOut = NULL;
@@ -336,6 +345,7 @@ int main(int argc, char **argv)
 		for (int i = 0; i < SdCount(); i++) {
 			char path[1024];
 			snprintf(path, sizeof path, "%s/%s", savedataOut, (const char *)SdName(i));
+			MakeParents(path);
 			FILE *f = fopen(path, "wb");
 			if (!f) { fprintf(stderr, "cannot write %s\n", path); continue; }
 			fwrite((const void *)SdBuf(i), 1, (size_t)SdSize(i), f);

@@ -24,6 +24,8 @@ int chimera_dolphin_vsync_numerator(void);
 int chimera_dolphin_vsync_denominator(void);
 void chimera_dolphin_set_machine(const char* name);
 void chimera_dolphin_set_memcard_a(int present);
+// the Wii's own "Screen: Widescreen" system setting (SYSCONF IPL.AR)
+void chimera_dolphin_set_widescreen(int on);
 void chimera_dolphin_set_cpu_core(const char* name);
 void chimera_dolphin_set_port(int port, int present);
 int chimera_dolphin_port_present(int port);
