@@ -466,7 +466,10 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
   if (!WaitForState(Core::State::Paused))
   {
     s_error = "the machine tore down during boot (see log)";
-    return 0;
+    // it is down, but not put away: its threads outlive Init and a joinable
+    // one met by a destructor at exit is std::terminate - a failed .wad
+    // install ended in a core dump instead of this load error (chimera#148)
+    return RefuseRunningMachine();
   }
   // The project declares which machine it is; the image does not get a vote.
   // A mismatch is a load error, not a silent boot of the other console.

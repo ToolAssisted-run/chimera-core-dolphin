@@ -11,9 +11,10 @@
     "gcm",
     "rvz",
     "dol",
-    "elf"
+    "elf",
+    "wad"
    ],
-   "help": "The disc image (.iso/.gcm, or dolphin's own .rvz), or a homebrew executable (.dol/.elf) booted directly the way a modded console would."
+   "help": "The disc image (.iso/.gcm, or dolphin's own .rvz), a homebrew executable (.dol/.elf) booted directly the way a modded console would, or a Wii channel (.wad - WiiWare and Virtual Console titles). A .wad is a Wii project: it is installed into the console's NAND before the machine starts and launched from there, the way the Wii Menu would."
   },
   {
    "id": "savedata",

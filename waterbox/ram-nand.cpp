@@ -310,13 +310,21 @@ public:
     if (!CheckPermission(*old_parent, caller_uid, caller_gid, Mode::Write) ||
         !CheckPermission(*new_parent, caller_uid, caller_gid, Mode::Write))
       return ResultCode::AccessDenied;
-    // an existing destination file is replaced, like the FS sysmodule
+    // Something of the SAME type at the destination is replaced, like the FS
+    // sysmodule and dolphin's HostBackend: a file by a file, a directory - with
+    // everything under it - by a directory. Only a type clash is Invalid.
+    // Installing a title needs the directory case: ES_InitImport makes the
+    // title's content directory, and FinishImport renames the import directory
+    // onto it; refusing that failed every .wad install (chimera#148).
     if (Node* existing = Find(new_path))
     {
-      if (!existing->is_file || !node->is_file)
+      if (existing->is_file != node->is_file)
         return ResultCode::Invalid;
-      store.nodes.erase(new_path);
+      const std::string doomed = new_path + "/";
+      for (auto it = store.nodes.begin(); it != store.nodes.end();)
+        it = (it->first == new_path || it->first.rfind(doomed, 0) == 0) ? store.nodes.erase(it) : std::next(it);
       std::erase(new_parent->children, new_split.file_name);
+      node = Find(old_path);  // the map moved nodes about; look it up again
     }
     // move the node and, for directories, the whole subtree
     std::vector<std::pair<std::string, Node>> moved;

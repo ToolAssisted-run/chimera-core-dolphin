@@ -217,6 +217,23 @@ else
 	SKIP "wii legs (no Wii disc in tests/roms-local) - would prove IOS HLE + the in-memory NAND across flavors"
 fi
 
+# ---- tier 2c: a Wii channel (.wad) ------------------------------------------
+# WiiWare and Virtual Console titles (chimera#148): the .wad is installed into
+# the in-memory NAND - ES's whole import, content by content, ending in a
+# directory rename onto the title's content directory - and launched from
+# there. DOLPHIN_WAD names one; none ships here.
+wad="${DOLPHIN_WAD:-}"
+if [ -n "$wad" ] && [ -f "$wad" ]; then
+	nat wd1 --frames 600 --report 300 --machine wii "$wad" > "$work/wd1.txt"
+	wbx --frames 600 --report 300 --settings '{"machine":"wii"}' "$wad" > "$work/wdg.txt"
+	if [ ! -s "$work/wd1.txt" ]; then FAIL "wad leg - the channel did not install and run"
+	elif ! cmp -s "$work/wd1.txt" "$work/wdg.txt"; then FAIL "wad leg - native vs sandbox"
+	elif [ "$(awk '{print $4}' "$work/wd1.txt" | sort -u | wc -l)" -lt 2 ]; then FAIL "wad leg - the machine did not move"
+	else PASS "wad leg - installed into NAND and launched, native == sandbox at 600 frames"; fi
+else
+	SKIP "wad leg (DOLPHIN_WAD not set) - would prove a WiiWare/VC title installs into the RAM NAND and runs"
+fi
+
 # --- the greenzone's frame-0 anchor rebuilds like any other state (#126) ----
 #
 # On the GPU bridge the OGL backend's objects live in the driver and a savestate
