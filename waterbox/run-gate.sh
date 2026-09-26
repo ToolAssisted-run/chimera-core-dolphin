@@ -142,6 +142,46 @@ else
 	else FAIL "gpu leg - flavors differ under the GPU"; fi
 fi
 
+# ---- the emulation options a project pins (chimera#149) --------------------
+# Nine settings, each a name the project spells and a knob dolphin has. Three
+# proofs: every name reaches its knob (dolphin's own config, read back after
+# boot - the defaults first, so a leg that reads nothing cannot pass); the
+# sandbox reads every declared name (a bogus value is a load error naming it);
+# and on the GPU, Internal Resolution above 1x hands out the crisp picture,
+# the same bytes in both flavors.
+opts_all="--set mmu=true --set widescreen_hack=true --set internal_resolution=3x --set msaa=4x --set ssaa=true --set anisotropy=16x --set texture_filtering=linear --set texture_cache=safe --set gpu_texture_decoding=true"
+opts_default="options mmu=0 widescreen_hack=0 aspect_w=1.000 internal_resolution=1 msaa=1 ssaa=0 anisotropy=-1 texture_filtering=0 texture_cache=128 gpu_texture_decoding=0"
+opts_want="options mmu=1 widescreen_hack=1 aspect_w=1.000 internal_resolution=3 msaa=4 ssaa=1 anisotropy=4 texture_filtering=2 texture_cache=0 gpu_texture_decoding=1"
+opt_line() { d="$1"; shift; rm -rf "$work/$d"; "$here/obj-native/run-native" --sys "$sys" --user "$work/$d" --frames 2 --report 2 --print-options "$@" "$swiss" 2>/dev/null | grep '^options'; }
+got_default="$(opt_line opd)"
+# shellcheck disable=SC2086
+got_all="$(opt_line opa $opts_all)"
+if [ "$got_default" != "$opts_default" ]; then FAIL "options:config leg - the defaults are not dolphin's own: $got_default"
+elif [ "$got_all" != "$opts_want" ]; then FAIL "options:config leg - a name did not reach its knob: $got_all"
+else PASS "options:config leg - all nine options reach dolphin's config, and unset they are dolphin's defaults"; fi
+missed=""
+for key in mmu widescreen_hack internal_resolution msaa ssaa anisotropy texture_filtering texture_cache gpu_texture_decoding; do
+	"$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" --frames 1 --settings "{\"$key\":\"bogus\"}" "$swiss" 2>&1 \
+		| grep -q "setting $key: unknown value" || missed="$missed $key"
+done
+if [ -n "$missed" ]; then FAIL "options:names leg - the sandbox never read:$missed"
+else PASS "options:names leg - the sandbox reads every declared option (a bogus value is a load error naming it)"; fi
+if grep -q 'gpu bridge: no context' "$work/gpu-n.err"; then
+	SKIP "options:crisp leg (no GL context) - would prove Internal Resolution hands out the crisp picture, native == sandbox"
+else
+	rm -rf "$work/ir-n"
+	"$here/obj-native/run-native" --sys "$sys" --user "$work/ir-n" --renderer opengl --set internal_resolution=2x \
+		--frames 30 --report 1 "$swiss" 2>/dev/null | grep '^frame' > "$work/ir-n.txt"
+	CHIMERA_GPU=1 "$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" \
+		--settings '{"renderer":"opengl-hw","internal_resolution":"2x"}' --frames 30 --report 1 "$swiss" 2>/dev/null | grep '^frame' > "$work/ir-g.txt"
+	size1="$(awk 'NR==30 { print $6 }' "$work/gpu-n.txt")"
+	size2="$(awk 'NR==30 { print $6 }' "$work/ir-n.txt")"
+	want2="$(echo "$size1" | awk -Fx '{ print $1 * 2 "x" $2 * 2 }')"
+	if [ ! -s "$work/ir-n.txt" ] || ! cmp -s "$work/ir-n.txt" "$work/ir-g.txt"; then FAIL "options:crisp leg - flavors differ at 2x"
+	elif [ -z "$size1" ] || [ "$size2" != "$want2" ]; then FAIL "options:crisp leg - 2x picture is $size2, want $want2 (1x is $size1)"
+	else PASS "options:crisp leg - 2x hands out the crisp picture ($size1 -> $size2), native == sandbox on this driver"; fi
+fi
+
 # ---- tier 2: a commercial disc --------------------------------------------
 if [ -f "$disc" ]; then
 	nat d1 --frames "$frames" --report 1 "$disc" > "$work/d1.txt"

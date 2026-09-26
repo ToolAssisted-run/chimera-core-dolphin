@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include "dolphin-driver.h"
 
@@ -91,6 +92,7 @@ int main(int argc, char** argv)
   long frames = 60;
   long report = 10;
   const char* ram_out = nullptr;
+  bool print_options = false;
   const char* savedata_out = nullptr;
   struct { long first, count; int index; } press[32];
   int presses = 0;
@@ -120,6 +122,20 @@ int main(int argc, char** argv)
     }
     else if (!strcmp(argv[i], "--wii-savedata") && i + 1 < argc)
       chimera_dolphin_set_wii_savedata(argv[++i]);
+    else if (!strcmp(argv[i], "--print-options"))
+      print_options = true;
+    else if (!strcmp(argv[i], "--set") && i + 1 < argc)
+    {
+      // --set name=value: an emulation option, as a project spells it
+      std::string kv = argv[++i];
+      const size_t eq = kv.find('=');
+      if (eq == std::string::npos ||
+          !chimera_dolphin_set_option(kv.substr(0, eq).c_str(), kv.substr(eq + 1).c_str()))
+      {
+        fprintf(stderr, "unknown option %s\n", kv.c_str());
+        return 2;
+      }
+    }
     else if (!strcmp(argv[i], "--widescreen"))
       chimera_dolphin_set_widescreen(1);
     else if (!strcmp(argv[i], "--renderer") && i + 1 < argc)
@@ -217,6 +233,12 @@ int main(int argc, char** argv)
       fwrite(chimera_dolphin_ram_ptr(), 1, chimera_dolphin_ram_size(), sf);
       fclose(sf);
     }
+  }
+  if (print_options)
+  {
+    char line[512];
+    chimera_dolphin_options_report(line, sizeof line);
+    printf("options %s\n", line);
   }
   if (ram_out)
   {

@@ -267,3 +267,58 @@ what that gate measured (the sandbox against the engine) but worth knowing.
 **What this does not establish** (gates.md, E): swiss on llvmpipe is neither a
 game nor a driver. The leg proves the dispatcher answered every opcode the
 guest sent, not that a picture is right on real hardware.
+
+## Emulation options a project pins (chimera#149, 2026-09-26)
+
+The issue asked for dolphin's picture and accuracy options. Each was measured
+before it was declared: native, OpenGL on the GTX 1060 box (WSL), each option
+at a non-default value against the default, the same fields. "RAM" is the
+console's 24 MiB; "picture" is what Chimera shows.
+
+| Option | Pro Rally 2002 (GC, 600 fields) | MK Armageddon (Wii, 600) | Virtua Striker 2002 (Triforce, 3000, 3D) |
+|---|---|---|---|
+| internal_resolution 2x | RAM + picture from field 100 | RAM + picture from 100 | RAM + picture; lag 547 vs 585 at 3000 |
+| msaa 4x, ssaa | RAM + picture from 100 | RAM + picture from 100 | (not run past 600) |
+| anisotropy 16x | RAM + picture from 100 | RAM + picture from 100 | (not run past 600) |
+| texture_filtering nearest / linear | RAM + picture from 100 / 400 | from 100 / none | (not run past 600) |
+| widescreen_hack | none (no 3D in the fields run) | none | wider view, see below |
+| mmu, texture_cache safe, gpu_texture_decoding | none | none | none (3000 fields) |
+| any of them on the software renderer | none | none | none |
+
+What that decided:
+
+- **The picture options are part of the machine.** EFB and XFB copies land in
+  the console's memory, and they are drawn with the option applied, so the
+  game reads back a different picture. They are project settings, chosen
+  once, like xemu's internal resolution in #122. All of them are
+  `exposedWhen renderer = opengl-hw`: the software rasterizer has none of them.
+- **Internal Resolution did not raise the picture's resolution** - Chimera
+  showed the console's 640-wide framebuffer decoded from RAM (patch 0021). By
+  the user's decision, above 1x the picture is now the crisp XFB copy the
+  presenter fetched from VRAM (patch 0023 hands it to the driver, which reads
+  it back): 1280x896 at 2x on a 640x448 game. The RAM at field 3000 is the
+  same whether the picture comes from VRAM or not. The known cost, measured
+  when patch 0021 was made: the crisp copy is not in a savestate, so after a
+  state load the picture can differ from a run that never stopped. The
+  machine does not, and a movie played from power-on is crisp throughout.
+  Capacity grew to 2880x2304 (4x a 720x576 field).
+- **The widescreen hack did nothing headless.** dolphin widens the projection
+  by the picture's aspect over the aspect it is drawn at, and works that out
+  only when presenting to a window, which this core never does. The driver
+  now sets the two factors itself each field, from the VI's aspect (machine
+  state) against a stated 16:9 screen - dolphin's own arithmetic on a
+  constant, so the same view on every host. On Virtua Striker's attract demo
+  the view is visibly wider. The picture stays 640 wide, squeezed.
+- **MMU, texture cache accuracy and GPU texture decoding measured inert** on
+  this content. Declared anyway, by the user's decision: MMU is known to
+  matter for some games (the TASVideos thread in the issue); Safe texture
+  cache matters for games that change textures in place. Their defaults are
+  dolphin's (off, Fast, off), so an existing project is the same machine.
+  Hard-coding Safe, as the issue suggested, would have changed every existing
+  opengl-hw project with no measured fix.
+
+Gate: `options:config` (native: every name reaches its knob in dolphin's own
+config after boot, and unset they read as dolphin's defaults),
+`options:names` (the sandbox refuses a bogus value for each declared name,
+naming it), `options:crisp` (GPU: 2x doubles the picture, native ==
+sandbox on this driver).

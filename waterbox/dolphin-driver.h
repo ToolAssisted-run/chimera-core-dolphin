@@ -26,6 +26,10 @@ void chimera_dolphin_set_machine(const char* name);
 void chimera_dolphin_set_memcard_a(int present);
 // the Wii's own "Screen: Widescreen" system setting (SYSCONF IPL.AR)
 void chimera_dolphin_set_widescreen(int on);
+// one of the emulation options a project pins (chimera#149); 0 = unknown name or value
+int chimera_dolphin_set_option(const char* name, const char* value);
+// the options as dolphin holds them after boot, one line (the gate reads it)
+int chimera_dolphin_options_report(char* out, int size);
 // a Triforce panel's Test (0), Service (1) and Coin (2) switches, per player
 void chimera_dolphin_set_switch(int pad, int index, int state);
 // nonzero when the project is a Triforce cabinet

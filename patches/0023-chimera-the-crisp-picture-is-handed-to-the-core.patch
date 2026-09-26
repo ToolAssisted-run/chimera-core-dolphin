@@ -1,0 +1,27 @@
+diff --git a/Source/Core/VideoCommon/Present.cpp b/Source/Core/VideoCommon/Present.cpp
+index 41d05f3..c340808 100644
+--- a/Source/Core/VideoCommon/Present.cpp
++++ b/Source/Core/VideoCommon/Present.cpp
+@@ -26,6 +26,13 @@
+ 
+ std::unique_ptr<VideoCommon::Presenter> g_presenter;
+ 
++// chimera: the frontend's picture above 1x internal resolution (chimera#149).
++// Handed the XFB texture the presenter just fetched - the crisp copy, rendered
++// at internal resolution - and the part of it that is the picture. Weak: a
++// build without the core's driver presents as it always did.
++void Chimera_PresentedXFB(AbstractTexture* texture, const MathUtil::Rectangle<int>& rect)
++    __attribute__((weak));
++
+ namespace VideoCommon
+ {
+ // Stretches the native/internal analog resolution aspect ratio from ~4:3 to ~16:9
+@@ -155,6 +162,8 @@ bool Presenter::FetchXFB(u32 xfb_addr, u32 fb_width, u32 fb_stride, u32 fb_heigh
+     m_last_xfb_id = m_xfb_entry->id;
+ 
+     m_xfb_entry->AcquireContentLock();
++    if (::Chimera_PresentedXFB && m_xfb_entry->texture)
++      ::Chimera_PresentedXFB(m_xfb_entry->texture.get(), m_xfb_rect);
+   }
+   m_last_xfb_addr = xfb_addr;
+   m_last_xfb_ticks = ticks;

@@ -4,7 +4,11 @@
 // run-native.cpp, the guest via the waterbox ABI shim (M1).
 // SPDX-License-Identifier: MIT
 
+#include <algorithm>
 #include <cstdint>
+#include <memory>
+#include <cstdlib>
+#include <initializer_list>
 #include <cstdio>
 #include <ctime>
 #include <cstring>
@@ -39,6 +43,11 @@
 #include "Core/Config/GraphicsSettings.h"
 #include "VideoCommon/VideoBackendBase.h"
 #include "VideoCommon/VideoConfig.h"
+#include "VideoCommon/Widescreen.h"
+#include "VideoCommon/TextureConfig.h"
+#include "VideoCommon/AbstractGfx.h"
+#include "VideoCommon/AbstractTexture.h"
+#include "VideoCommon/AbstractStagingTexture.h"
 #include "UICommon/UICommon.h"
 #include "Common/NandPaths.h"
 #include "Core/IOS/FS/FileSystem.h"
@@ -88,6 +97,24 @@ static bool s_renderer_opengl;
 // not run then (g_gfx is an SWGfx and the OGL helper casts it unchecked).
 static bool s_gl_backend;
 static bool s_port_present[4] = {true, false, false, false};
+// The emulation options a project may pin (chimera#149), as the project gave
+// them; kUnset = not given, dolphin's own default stands. Every declared
+// default IS dolphin's default, so a project made before these existed is the
+// same machine it always was.
+static constexpr int kUnset = -1000;
+struct Options
+{
+  int mmu = kUnset;
+  int widescreen_hack = kUnset;
+  int internal_resolution = kUnset;
+  int msaa = kUnset;
+  int ssaa = kUnset;
+  int anisotropy = kUnset;
+  int texture_filtering = kUnset;
+  int texture_cache = kUnset;
+  int gpu_texture_decoding = kUnset;
+};
+static Options s_opt;
 extern "C" int chimera_dolphin_gpu_bridge_present(void) __attribute__((weak));
 
 static constexpr uint16_t kWireBit[12] = {
@@ -102,6 +129,14 @@ static constexpr uint16_t kWireBit[12] = {
 // default): an interlaced game's two fields hand out the same full-height
 // frame, so the picture holds still instead of bobbing a line at field rate.
 static uint32_t s_video[720 * 576];
+// Above 1x internal resolution on the GPU, the picture is the crisp XFB the
+// presenter fetched (patch 0023), read back here - up to 4x the machine's.
+static std::vector<uint32_t> s_video_hi;
+static bool s_video_is_hi;
+static bool CrispPicture()
+{
+  return s_gl_backend && s_opt.internal_resolution != kUnset && s_opt.internal_resolution > 1;
+}
 static int s_video_w = 640, s_video_h = 480;
 
 // ---- save data ------------------------------------------------------------
@@ -186,6 +221,25 @@ extern "C" bool Chimera_GetPadStatus(int chan, GCPadStatus* status)
   return true;
 }
 
+// The widescreen hack (chimera#149). dolphin widens the projection by the
+// picture's aspect over the aspect it is DRAWN at, and works that out when it
+// presents to a window - which this core never does, so the hack did nothing.
+// Here the screen is a 16:9 one, stated rather than measured from a window:
+// dolphin's own arithmetic, on a constant, from the VI's aspect (machine
+// state) - the same view on every host. The picture stays the machine's 640
+// pixels wide, squeezed; Config > Display at 16:9 shows it as it was meant.
+static void WidenTheView()
+{
+  float source = Core::System::GetInstance().GetVideoInterface().GetAspectRatio();
+  if (g_widescreen && g_widescreen->IsGameWidescreen())
+    source *= (16.0f / 9.0f) / (4.0f / 3.0f);
+  const float adjust = source / (16.0f / 9.0f);
+  const float w = adjust > 1 ? 1.0f : adjust;
+  const float h = adjust > 1 ? 1.0f / adjust : 1.0f;
+  g_Config.fAspectRatioHackW = g_ActiveConfig.fAspectRatioHackW = w;
+  g_Config.fAspectRatioHackH = g_ActiveConfig.fAspectRatioHackH = h;
+}
+
 extern "C" void Chimera_OutputField(int /*field*/, uint32_t xfb_addr, uint32_t fb_width,
                                     uint32_t fb_stride, uint32_t fb_height)
 {
@@ -196,6 +250,8 @@ extern "C" void Chimera_OutputField(int /*field*/, uint32_t xfb_addr, uint32_t f
             fb_height);
     logged++;
   }
+  if (s_gl_backend && s_opt.widescreen_hack == 1)
+    WidenTheView();
   if (!xfb_addr || !fb_width || !fb_height)
     return;
   auto& memory = Core::System::GetInstance().GetMemory();
@@ -218,6 +274,40 @@ extern "C" void Chimera_OutputField(int /*field*/, uint32_t xfb_addr, uint32_t f
   }
   s_video_w = int(w);
   s_video_h = int(h);
+  s_video_is_hi = false;
+}
+
+// patch 0023: the XFB the presenter just fetched, at internal resolution. It
+// runs after Chimera_OutputField for the same field (single core: the swap is
+// synchronous), so when it is used it replaces that field's RAM decode.
+void Chimera_PresentedXFB(AbstractTexture* texture, const MathUtil::Rectangle<int>& rect)
+{
+  if (!CrispPicture() || !texture || rect.GetWidth() <= 0 || rect.GetHeight() <= 0 ||
+      texture->GetFormat() != AbstractTextureFormat::RGBA8)
+    return;
+  const int w = std::min(rect.GetWidth(), 720 * 4), h = std::min(rect.GetHeight(), 576 * 4);
+  // made per field, not kept: a state load moves the GL context (#43), and a
+  // kept one would hold names from the old one
+  std::unique_ptr<AbstractStagingTexture> readback = g_gfx->CreateStagingTexture(
+      StagingTextureType::Readback, TextureConfig(u32(w), u32(h), 1, 1, 1,
+                                                  AbstractTextureFormat::RGBA8, 0,
+                                                  AbstractTextureType::Texture_2DArray));
+  if (!readback)
+    return;
+  const MathUtil::Rectangle<int> src{rect.left, rect.top, rect.left + w, rect.top + h};
+  readback->CopyFromTexture(texture, src, 0, 0, readback->GetRect());
+  readback->Flush();
+  if (!readback->Map())
+    return;
+  s_video_hi.resize(size_t(w) * h);
+  readback->ReadTexels(readback->GetRect(), s_video_hi.data(), u32(w) * 4);
+  readback->Unmap();
+  // RGBA in memory, the frontend takes BGRA
+  for (uint32_t& px : s_video_hi)
+    px = (px & 0xFF00FF00u) | ((px & 0xFFu) << 16) | ((px >> 16) & 0xFFu) | 0xFF000000u;
+  s_video_w = w;
+  s_video_h = h;
+  s_video_is_hi = true;
 }
 
 // Every alert is answered "yes" and logged; a machine has nobody to ask.
@@ -247,6 +337,9 @@ public:
     const bool gl = s_renderer_opengl && chimera_dolphin_gpu_bridge_present &&
                     chimera_dolphin_gpu_bridge_present();
     s_gl_backend = gl;
+    // patch 0021 presents the XFB decoded from the machine's memory; above 1x
+    // the crisp copy in VRAM is the picture wanted (chimera#149)
+    g_Config.bChimeraXfbFromRamOnly = !CrispPicture();
     layer->Set(Config::MAIN_GFX_BACKEND, std::string(gl ? "OGL" : "Software Renderer"));
     if (gl)
     {
@@ -259,6 +352,24 @@ public:
       layer->Set(Config::GFX_SHADER_COMPILATION_MODE, ShaderCompilationMode::Synchronous);
       layer->Set(Config::GFX_SHADER_CACHE, false);
     }
+    if (s_opt.mmu != kUnset)
+      layer->Set(Config::MAIN_MMU, s_opt.mmu != 0);
+    if (s_opt.widescreen_hack != kUnset)
+      layer->Set(Config::GFX_WIDESCREEN_HACK, s_opt.widescreen_hack != 0);
+    if (s_opt.internal_resolution != kUnset)
+      layer->Set(Config::GFX_EFB_SCALE, s_opt.internal_resolution);
+    if (s_opt.msaa != kUnset)
+      layer->Set(Config::GFX_MSAA, u32(s_opt.msaa));
+    if (s_opt.ssaa != kUnset)
+      layer->Set(Config::GFX_SSAA, s_opt.ssaa != 0);
+    if (s_opt.anisotropy != kUnset)
+      layer->Set(Config::GFX_ENHANCE_MAX_ANISOTROPY, AnisotropicFilteringMode(s_opt.anisotropy));
+    if (s_opt.texture_filtering != kUnset)
+      layer->Set(Config::GFX_ENHANCE_FORCE_TEXTURE_FILTERING, TextureFilteringMode(s_opt.texture_filtering));
+    if (s_opt.texture_cache != kUnset)
+      layer->Set(Config::GFX_SAFE_TEXTURE_CACHE_COLOR_SAMPLES, s_opt.texture_cache);
+    if (s_opt.gpu_texture_decoding != kUnset)
+      layer->Set(Config::GFX_ENABLE_GPU_TEXTURE_DECODING, s_opt.gpu_texture_decoding != 0);
     layer->Set(Config::MAIN_DSP_HLE, true);
     layer->Set(Config::MAIN_DSP_JIT, false);
     layer->Set(Config::MAIN_AUDIO_BACKEND, std::string(BACKEND_NULLSOUND));
@@ -630,7 +741,7 @@ const uint32_t* chimera_dolphin_video(int* w, int* h)
 {
   *w = s_video_w;
   *h = s_video_h;
-  return s_video;
+  return s_video_is_hi ? s_video_hi.data() : s_video;
 }
 
 const int16_t* chimera_dolphin_audio(int* frames)
@@ -748,6 +859,79 @@ void chimera_dolphin_set_machine(const char* name)
 void chimera_dolphin_set_widescreen(int on)
 {
   s_widescreen = on != 0;
+}
+
+// What dolphin was told, after boot: each option as dolphin's own config holds
+// it (the gate's proof that each name reaches its knob), plus the widescreen
+// factor the driver works out. The config, not the video config: a backend
+// clamps what it lacks (the software renderer has no MSAA), and that is the
+// backend's business, not whether the name arrived.
+int chimera_dolphin_options_report(char* out, int size)
+{
+  return snprintf(out, size_t(size),
+                  "mmu=%d widescreen_hack=%d aspect_w=%.3f internal_resolution=%d msaa=%u "
+                  "ssaa=%d anisotropy=%d texture_filtering=%d texture_cache=%d "
+                  "gpu_texture_decoding=%d",
+                  int(Config::Get(Config::MAIN_MMU)), int(Config::Get(Config::GFX_WIDESCREEN_HACK)),
+                  double(g_ActiveConfig.fAspectRatioHackW), Config::Get(Config::GFX_EFB_SCALE),
+                  Config::Get(Config::GFX_MSAA), int(Config::Get(Config::GFX_SSAA)),
+                  int(Config::Get(Config::GFX_ENHANCE_MAX_ANISOTROPY)),
+                  int(Config::Get(Config::GFX_ENHANCE_FORCE_TEXTURE_FILTERING)),
+                  Config::Get(Config::GFX_SAFE_TEXTURE_CACHE_COLOR_SAMPLES),
+                  int(Config::Get(Config::GFX_ENABLE_GPU_TEXTURE_DECODING)));
+}
+
+// name = value, both as the project spells them; 0 = no such option or value
+int chimera_dolphin_set_option(const char* name, const char* value)
+{
+  if (!name || !value)
+    return 0;
+  auto boolean = [&](int& to) {
+    if (strcmp(value, "true") == 0 || strcmp(value, "1") == 0)
+      return to = 1, 1;
+    if (strcmp(value, "false") == 0 || strcmp(value, "0") == 0)
+      return to = 0, 1;
+    return 0;
+  };
+  auto pick = [&](int& to, std::initializer_list<const char*> names, int first) {
+    int i = first;
+    for (const char* n : names)
+    {
+      if (strcmp(value, n) == 0)
+        return to = i, 1;
+      i++;
+    }
+    return 0;
+  };
+  if (strcmp(name, "mmu") == 0)
+    return boolean(s_opt.mmu);
+  if (strcmp(name, "widescreen_hack") == 0)
+    return boolean(s_opt.widescreen_hack);
+  if (strcmp(name, "ssaa") == 0)
+    return boolean(s_opt.ssaa);
+  if (strcmp(name, "gpu_texture_decoding") == 0)
+    return boolean(s_opt.gpu_texture_decoding);
+  if (strcmp(name, "internal_resolution") == 0)
+    return pick(s_opt.internal_resolution, {"1x", "2x", "3x", "4x"}, 1);
+  if (strcmp(name, "msaa") == 0)
+  {
+    const int v = strcmp(value, "off") == 0 ? 1 : strcmp(value, "2x") == 0 ? 2 :
+                  strcmp(value, "4x") == 0 ? 4 : strcmp(value, "8x") == 0 ? 8 : 0;
+    return v ? (s_opt.msaa = v, 1) : 0;
+  }
+  if (strcmp(name, "anisotropy") == 0)
+    return pick(s_opt.anisotropy, {"default", "1x", "2x", "4x", "8x", "16x"}, -1);
+  if (strcmp(name, "texture_filtering") == 0)
+    return pick(s_opt.texture_filtering, {"default", "nearest", "linear"}, 0);
+  if (strcmp(name, "texture_cache") == 0)
+  {
+    // dolphin's Accuracy slider: Safe, Medium, Fast = 0, 512, 128 samples
+    if (strcmp(value, "safe") == 0) return s_opt.texture_cache = 0, 1;
+    if (strcmp(value, "medium") == 0) return s_opt.texture_cache = 512, 1;
+    if (strcmp(value, "fast") == 0) return s_opt.texture_cache = 128, 1;
+    return 0;
+  }
+  return 0;
 }
 
 void chimera_dolphin_set_memcard_a(int present)

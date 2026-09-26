@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 
 #include <emulibc.h>
 #include <waterbox_settings.h>
@@ -95,6 +96,18 @@ ECL_EXPORT int Init(void)
         }
       }
       chimera_dolphin_set_wii_savedata(path);
+    }
+  }
+  // the emulation options a project pins (chimera#149): absent = dolphin's default
+  for (const char* key : {"mmu", "widescreen_hack", "internal_resolution", "msaa", "ssaa",
+                          "anisotropy", "texture_filtering", "texture_cache",
+                          "gpu_texture_decoding"})
+  {
+    char val[24];
+    if (wbx_setting_str(key, val, sizeof val) > 0 && !chimera_dolphin_set_option(key, val))
+    {
+      snprintf(g_loadError, sizeof g_loadError, "setting %s: unknown value '%s'", key, val);
+      return 0;
     }
   }
   char cpuCore[32] = "jit";
