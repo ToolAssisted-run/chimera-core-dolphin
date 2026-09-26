@@ -1,0 +1,27 @@
+diff --git a/Source/Core/Core/HW/GCPad.cpp b/Source/Core/Core/HW/GCPad.cpp
+--- a/Source/Core/Core/HW/GCPad.cpp
++++ b/Source/Core/Core/HW/GCPad.cpp
+@@ -53,8 +53,23 @@
+   return !s_config.ControllersNeedToBeCreated();
+ }
+ 
++// chimera: the same weak hook the GameCube controller device asks
++// (SI_DeviceGCController), so a pad read that does not go through a
++// controller device - the Triforce baseboard's I/O adapters read Pad::GetStatus
++// directly - gets the machine's input and not the host's controller emulation,
++// which a sandboxed core does not have. A port the hook does not serve reads as
++// an unplugged pad.
++extern "C" bool Chimera_GetPadStatus(int chan, GCPadStatus* status) __attribute__((weak));
++
+ GCPadStatus GetStatus(int pad_num)
+ {
++  if (Chimera_GetPadStatus)
++  {
++    GCPadStatus status{};
++    if (!Chimera_GetPadStatus(pad_num, &status))
++      status.isConnected = false;
++    return status;
++  }
+   return static_cast<GCPad*>(s_config.GetController(pad_num))->GetInput();
+ }
+ 

@@ -122,18 +122,37 @@ ECL_EXPORT int Init(void)
 
 // Which of the declared controls this machine has: a control belongs to a
 // port, and an empty port has none of them.
+// A Triforce cabinet declares its own panel: two players of a GameCube pad's
+// twelve buttons and then Coin, Service and Test - fifteen each - and their six
+// axes (chimera#148). Its two players are always there.
+static const int kTriforceButtons = 15;
+
 ECL_EXPORT int IsButtonActive(int32_t index)
 {
+  if (chimera_dolphin_triforce())
+    return index >= 0 && index < 2 * kTriforceButtons;
   return index >= 0 && index < 48 && chimera_dolphin_port_present(index / 12);
 }
 
 ECL_EXPORT int IsAxisActive(int32_t index)
 {
+  if (chimera_dolphin_triforce())
+    return index >= 0 && index < 12;
   return index >= 0 && index < 24 && chimera_dolphin_port_present(index / 6);
 }
 
 ECL_EXPORT void SetButton(int32_t index, int32_t state)
 {
+  if (chimera_dolphin_triforce())
+  {
+    const int pad = index / kTriforceButtons, wire = index % kTriforceButtons;
+    // Coin, Service, Test in the declaration; Test, Service, Coin on the switch word
+    if (wire < 12)
+      chimera_dolphin_set_button(pad, wire, state);
+    else
+      chimera_dolphin_set_switch(pad, 14 - wire, state);
+    return;
+  }
   chimera_dolphin_set_button(index / 12, index % 12, state);
 }
 

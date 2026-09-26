@@ -217,6 +217,41 @@ else
 	SKIP "wii legs (no Wii disc in tests/roms-local) - would prove IOS HLE + the in-memory NAND across flavors"
 fi
 
+# ---- tier 2d: a Triforce cabinet -------------------------------------------
+# Sega's baseboard on a GameCube (chimera#148): the image carries the mark, the
+# project says triforce, and the board reads the players' panels through
+# Pad::GetStatus (patch 0022). DOLPHIN_TRIFORCE names an image; none ships here.
+tf="${DOLPHIN_TRIFORCE:-}"
+if [ -n "$tf" ] && [ -f "$tf" ]; then
+	# The picture only, every 30 fields. Virtua Striker 2002's RAM and sound
+	# part ways between the flavors at field 658: a buffer the game fills then
+	# holds 16-bit values a few units apart, each flavor repeating itself
+	# exactly. Not the JIT (the interpreter parts too), not the backend files,
+	# ARAM or libm's powf; still unexplained (2026-09-26). The pictures match
+	# pixel for pixel, so this leg holds the flavors to those.
+	nat tf1 --frames 900 --report 30 --machine triforce "$tf" > "$work/tf1.txt"
+	wbx --frames 900 --report 30 --settings '{"machine":"triforce"}' "$tf" > "$work/tfg.txt"
+	awk '/^frame/ { print $2, $6, $7 }' "$work/tf1.txt" > "$work/tf1v.txt"
+	awk '/^frame/ { print $2, $6, $7 }' "$work/tfg.txt" > "$work/tfgv.txt"
+	if [ "$(wc -l < "$work/tf1v.txt")" -ne 30 ] || ! cmp -s "$work/tf1v.txt" "$work/tfgv.txt"; then FAIL "triforce leg - native vs sandbox picture"
+	else PASS "triforce leg - the baseboard is attached and the cabinet runs, native == sandbox picture (RAM parts at 658, open)"; fi
+	wbx --frames 120 --report 1 --rerecord --settings '{"machine":"triforce"}' "$tf" > "$work/tfrr.txt"
+	wbx --frames 120 --report 1 --settings '{"machine":"triforce"}' "$tf" > "$work/tfpl.txt"
+	if [ -s "$work/tfpl.txt" ] && cmp -s "$work/tfrr.txt" "$work/tfpl.txt"; then PASS "triforce rerecord leg - a save and reload around every frame changes nothing"
+	else FAIL "triforce rerecord leg"; fi
+	# the cabinet's Coin switch (panel index 12, P1 Coin) reaches the machine
+	wbx --frames 900 --report 900 --settings '{"machine":"triforce"}' --press 600:6:12 "$tf" > "$work/tfcoin.txt"
+	tail -1 "$work/tfg.txt" > "$work/tfnocoin.txt"
+	if [ -s "$work/tfcoin.txt" ] && ! cmp -s "$work/tfcoin.txt" "$work/tfnocoin.txt"; then PASS "triforce coin leg - the Coin switch reaches the board"
+	else FAIL "triforce coin leg - a coin changed nothing"; fi
+	# the declared machine is a gate: a Triforce image in a GameCube project is refused
+	if wbx --frames 1 --settings '{"machine":"gamecube"}' "$tf" > "$work/tfm.txt" 2>/dev/null && [ -s "$work/tfm.txt" ]; then
+		FAIL "triforce machine leg - the sandbox booted a Triforce image as a GameCube"
+	else PASS "triforce machine leg - a Triforce image in a GameCube project is a load error"; fi
+else
+	SKIP "triforce legs (DOLPHIN_TRIFORCE not set) - would prove the baseboard, its panel and the cabinet across flavors"
+fi
+
 # ---- tier 2c: a Wii channel (.wad) ------------------------------------------
 # WiiWare and Virtual Console titles (chimera#148): the .wad is installed into
 # the in-memory NAND - ES's whole import, content by content, ending in a

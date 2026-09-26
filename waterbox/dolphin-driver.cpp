@@ -58,6 +58,9 @@ struct PadWire
 {
   uint16_t buttons = 0;
   uint8_t axis[6] = {0x80, 0x80, 0x80, 0x80, 0, 0};
+  // A Triforce cabinet's Test, Service and Coin switches, per player: dolphin's
+  // baseboard reads them from GCPadStatus::switches (chimera#148)
+  uint8_t switches = 0;
 };
 static PadWire s_pad[4];
 static bool s_input_read;
@@ -69,6 +72,15 @@ static bool s_memcard_a = true;
 static bool s_widescreen = false;
 // which console the project declares ("gamecube"/"wii"); empty = don't check
 static char s_machine[16];
+// A Triforce cabinet (chimera#148): the machine is a GameCube with Sega's
+// baseboard on serial device 0 and the media board on EXI serial port 1, and
+// its two players' panels are read by the baseboard's I/O adapters through
+// Pad::GetStatus (patch 0022) - so both pads are fed whatever the port
+// settings say, and the other serial devices are left unplugged.
+static bool Triforce()
+{
+  return strcmp(s_machine, "triforce") == 0;
+}
 static PowerPC::CPUCore s_cpu_core = PowerPC::CPUCore::JIT64;
 static bool s_renderer_opengl;
 // The backend Init actually chose, not the setting: the bridge can be live
@@ -155,7 +167,9 @@ extern "C" uint64_t Chimera_SettingsSerialSeconds()
 
 extern "C" bool Chimera_GetPadStatus(int chan, GCPadStatus* status)
 {
-  if (chan < 0 || chan >= 4 || !s_port_present[chan])
+  if (chan < 0 || chan >= 4)
+    return false;
+  if (Triforce() ? chan >= 2 : !s_port_present[chan])
     return false;
   const PadWire& w = s_pad[chan];
   status->button = w.buttons;
@@ -165,6 +179,7 @@ extern "C" bool Chimera_GetPadStatus(int chan, GCPadStatus* status)
   status->substickY = w.axis[3];
   status->triggerLeft = uint8_t(w.buttons & PAD_TRIGGER_L ? 255 : w.axis[4]);
   status->triggerRight = uint8_t(w.buttons & PAD_TRIGGER_R ? 255 : w.axis[5]);
+  status->switches = w.switches;
   status->isConnected = true;
   if (chan == 0)
     s_input_read = true;
@@ -253,9 +268,15 @@ public:
     for (int ch = 0; ch < 4; ch++)
     {
       layer->Set(Config::GetInfoForSIDevice(ch),
+                 Triforce() ? (ch == 0 ? SerialInterface::SIDEVICE_AM_BASEBOARD :
+                                         SerialInterface::SIDEVICE_NONE) :
                  s_port_present[ch] ? SerialInterface::SIDEVICE_GC_CONTROLLER :
                                       SerialInterface::SIDEVICE_NONE);
     }
+    // what BootManager attaches for a Triforce image when nothing overrides it -
+    // and this layer overrides the serial devices, so it has to say so itself
+    if (Triforce())
+      layer->Set(Config::MAIN_SERIAL_PORT_1, ExpansionInterface::EXIDeviceType::Baseboard);
     // the machine's clock belongs to the machine: a fixed epoch, never the host
     layer->Set(Config::MAIN_CUSTOM_RTC_ENABLE, true);
     layer->Set(Config::MAIN_CUSTOM_RTC_VALUE, u32(946684800));
@@ -475,14 +496,12 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
   // A mismatch is a load error, not a silent boot of the other console.
   if (s_machine[0])
   {
-    const bool wants_wii = strcmp(s_machine, "wii") == 0;
-    if (wants_wii != Sys().IsWii())
+    const char* declared = strcmp(s_machine, "wii") == 0 ? "Wii" : Triforce() ? "Triforce" : "GameCube";
+    const char* booted = Sys().IsWii() ? "Wii" : Sys().IsTriforce() ? "Triforce" : "GameCube";
+    if (strcmp(declared, booted) != 0)
     {
-      s_error = wants_wii
-                    ? "the project says Wii, but this image boots a GameCube - pick "
-                      "GameCube in the New Project wizard's System box"
-                    : "the project says GameCube, but this image boots a Wii - pick "
-                      "Wii in the New Project wizard's System box";
+      s_error = std::string("the project says ") + declared + ", but this image boots a " + booted +
+                " - pick " + booted + " in the New Project wizard's System box";
       return RefuseRunningMachine();
     }
   }
@@ -576,6 +595,23 @@ void chimera_dolphin_set_button(int pad, int index, int state)
     s_pad[pad].buttons |= kWireBit[index];
   else
     s_pad[pad].buttons &= uint16_t(~kWireBit[index]);
+}
+
+// A Triforce panel's switches: 0 Test, 1 Service, 2 Coin
+void chimera_dolphin_set_switch(int pad, int index, int state)
+{
+  static const uint8_t kSwitchBit[3] = {SWITCH_TEST, SWITCH_SERVICE, SWITCH_COIN};
+  if (pad < 0 || pad >= 4 || index < 0 || index >= 3)
+    return;
+  if (state)
+    s_pad[pad].switches |= kSwitchBit[index];
+  else
+    s_pad[pad].switches &= uint8_t(~kSwitchBit[index]);
+}
+
+int chimera_dolphin_triforce(void)
+{
+  return Triforce() ? 1 : 0;
 }
 
 void chimera_dolphin_set_axis(int pad, int index, int value)

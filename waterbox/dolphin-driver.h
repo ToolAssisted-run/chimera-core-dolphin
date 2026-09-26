@@ -26,6 +26,10 @@ void chimera_dolphin_set_machine(const char* name);
 void chimera_dolphin_set_memcard_a(int present);
 // the Wii's own "Screen: Widescreen" system setting (SYSCONF IPL.AR)
 void chimera_dolphin_set_widescreen(int on);
+// a Triforce panel's Test (0), Service (1) and Coin (2) switches, per player
+void chimera_dolphin_set_switch(int pad, int index, int state);
+// nonzero when the project is a Triforce cabinet
+int chimera_dolphin_triforce(void);
 // a Wii project's saves to start from: the .zip Export Save Data wrote
 void chimera_dolphin_set_wii_savedata(const char* zip_path);
 void chimera_dolphin_set_cpu_core(const char* name);
