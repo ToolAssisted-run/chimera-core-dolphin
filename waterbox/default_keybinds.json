@@ -52,12 +52,16 @@
    "Main Stick X": {
     "Value": "X1 LeftThumbX Axis",
     "Mult": 1.0,
-    "Deadzone": 0.1
+    "Deadzone": 0.1,
+    "ButtonBindPositive": "Right",
+    "ButtonBindNegative": "Left"
    },
    "Main Stick Y": {
     "Value": "X1 LeftThumbY Axis",
     "Mult": -1.0,
-    "Deadzone": 0.1
+    "Deadzone": 0.1,
+    "ButtonBindPositive": "Down",
+    "ButtonBindNegative": "Up"
    },
    "C-Stick X": {
     "Value": "X1 RightThumbX Axis",
@@ -84,12 +88,16 @@
    "Main Stick X": {
     "Value": "X1 LeftThumbX Axis",
     "Mult": 1.0,
-    "Deadzone": 0.1
+    "Deadzone": 0.1,
+    "ButtonBindPositive": "Right",
+    "ButtonBindNegative": "Left"
    },
    "Main Stick Y": {
     "Value": "X1 LeftThumbY Axis",
     "Mult": -1.0,
-    "Deadzone": 0.1
+    "Deadzone": 0.1,
+    "ButtonBindPositive": "Down",
+    "ButtonBindNegative": "Up"
    },
    "C-Stick X": {
     "Value": "X1 RightThumbX Axis",

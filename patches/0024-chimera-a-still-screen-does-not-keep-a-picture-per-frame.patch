@@ -1,0 +1,23 @@
+--- a/Source/Core/VideoCommon/TextureCacheBase.cpp
++++ b/Source/Core/VideoCommon/TextureCacheBase.cpp
+@@ -1885,6 +1885,20 @@ RcTcacheEntry TextureCacheBase::GetXFBTexture(u32 address, u32 width, u32 height
+     return entry;
+   }
+ 
++  // chimera: the RAM decodes this path made on earlier frames go first. With
++  // the lookup above skipped, every frame makes a new one and inserts it, and
++  // Cleanup only drops an XFB copy once its memory has CHANGED - so a still
++  // screen kept one picture per frame, forever: 1.1 MiB a frame at 640x448,
++  // and F-Zero AX's "Motor Initializing." ran the machine out of memory at
++  // frame 1650 (chimera#157). Dropped here, each one goes back to the pool
++  // (or does once the presenter lets go of it) and the next frame reuses it.
++  if (g_ActiveConfig.bChimeraXfbFromRamOnly)
++  {
++    auto [it, end] = m_textures_by_address.equal_range(address);
++    while (it != end)
++      it = it->second->is_xfb_container ? InvalidateTexture(it) : std::next(it);
++  }
++
+   // Create a new VRAM texture, and fill it with the data from guest RAM.
+   entry = AllocateCacheEntry(TextureConfig(width, height, 1, 1, 1, AbstractTextureFormat::RGBA8,
+                                            AbstractTextureFlag_RenderTarget,

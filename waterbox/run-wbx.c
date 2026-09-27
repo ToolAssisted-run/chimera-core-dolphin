@@ -156,6 +156,10 @@ int main(int argc, char **argv)
 	int rewind = 0, rerecord = 0;
 	struct { long first, count; int index; } press[32];
 	int presses = 0;
+	/* --axis I:V holds axis I at V on every frame, the way the frontend sends
+	 * its axes: every one, every frame */
+	struct { int index, value; } axis[16];
+	int naxes = 0;
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = atol(argv[++i]);
 		else if (!strcmp(argv[i], "--report") && i + 1 < argc) report = atol(argv[++i]);
@@ -171,6 +175,10 @@ int main(int argc, char **argv)
 			if (sscanf(argv[++i], "%ld:%ld:%d", &a, &b, &c) == 3) {
 				press[presses].first = a; press[presses].count = b; press[presses].index = c; presses++;
 			}
+		}
+		else if (!strcmp(argv[i], "--axis") && i + 1 < argc && naxes < 16) {
+			int a, v;
+			if (sscanf(argv[++i], "%d:%d", &a, &v) == 2) { axis[naxes].index = a; axis[naxes].value = v; naxes++; }
 		}
 		else if (!core) core = argv[i];
 		else game = argv[i];
@@ -276,6 +284,7 @@ int main(int argc, char **argv)
 
 	framefn FrameAdvance = (framefn)proc(h, "FrameAdvance");
 	btnfn SetButton = (btnfn)proc(h, "SetButton");
+	btnfn SetAxis = (btnfn)proc(h, "SetAxis");
 	intfn InputWasRead = (intfn)proc(h, "InputWasRead");
 	ptrfn GetVideoBgra = (ptrfn)proc(h, "GetVideoBgra");
 	intfn GetVideoWidth = (intfn)proc(h, "GetVideoWidth");
@@ -323,6 +332,8 @@ int main(int argc, char **argv)
 	for (long f = 1; f <= frames; f++) {
 		for (int pi = 0; pi < presses; pi++)
 			SetButton(press[pi].index, f >= press[pi].first && f < press[pi].first + press[pi].count);
+		for (int ai = 0; ai < naxes; ai++)
+			SetAxis(axis[ai].index, axis[ai].value);
 		if (rerecord) {
 			/* save+load around every frame; the digests must match a plain run */
 			membuf st = {0};

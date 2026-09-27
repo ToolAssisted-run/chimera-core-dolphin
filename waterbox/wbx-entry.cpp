@@ -171,8 +171,13 @@ ECL_EXPORT void SetButton(int32_t index, int32_t state)
 
 ECL_EXPORT void SetAxis(int32_t index, int32_t value)
 {
-  // the frontend's signed axis (-128..127) onto the pad's biased byte
-  chimera_dolphin_set_axis(index / 6, index % 6, value + 128);
+  // A stick: the frontend's signed axis (-128..127) onto the pad's biased byte.
+  // A trigger (4 and 5 of each pad) is declared 0..255, released at 0, and
+  // passes as it is. Biased too, a released trigger read half pressed - 128 of
+  // travel on every frame the frontend sent its axes, which it always does
+  // (chimera#157: F-Zero AX's gas and brake stood at 127 before a key was touched).
+  const int axis = index % 6;
+  chimera_dolphin_set_axis(index / 6, axis, axis >= 4 ? value : value + 128);
 }
 
 #ifdef CHIMERA_GL_BRIDGE

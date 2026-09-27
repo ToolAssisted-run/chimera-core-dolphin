@@ -292,6 +292,33 @@ else
 	SKIP "triforce legs (DOLPHIN_TRIFORCE not set) - would prove the baseboard, its panel and the cabinet across flavors"
 fi
 
+# ---- tier 2e: F-Zero AX, a still screen and the panel's analog controls ------
+# chimera#157. DOLPHIN_FZERO names the image; none ships here. By frame 3000
+# the game has sat on "Motor Initializing." and then on its handle and brake
+# calibration screen, which reads the stick and both triggers.
+fz="${DOLPHIN_FZERO:-}"
+if [ -n "$fz" ] && [ -f "$fz" ]; then
+	# A still screen used to keep one picture per frame (patch 0024): 1.1 MiB a
+	# frame, and the guest ran out of memory near frame 1650. Reaching frame
+	# 3000 in the box, on native's picture, is the proof.
+	nat fz1 --frames 3000 --report 3000 --machine triforce "$fz" > "$work/fz1.txt"
+	wbx --frames 3000 --report 3000 --settings '{"machine":"triforce"}' "$fz" > "$work/fzg.txt"
+	if [ -s "$work/fzg.txt" ] && [ "$(awk '{ print $2, $6, $7 }' "$work/fz1.txt")" = "$(awk '{ print $2, $6, $7 }' "$work/fzg.txt")" ]; then
+		PASS "fzero still-screen leg - 3000 frames of a still screen in the box, native's picture at the end"
+	else FAIL "fzero still-screen leg - the sandbox did not reach frame 3000 on native's picture"; fi
+	# A released trigger is released. The frontend sends every axis on every
+	# frame, so P1's triggers (axes 4 and 5) held at 0 must leave the machine
+	# exactly as never sending them does - biased like a stick, they read half
+	# pressed. Held at 255, the gas moves the machine: the axis does arrive.
+	wbx --frames 3000 --report 3000 --settings '{"machine":"triforce"}' --axis 4:0 --axis 5:0 "$fz" > "$work/fzrel.txt"
+	wbx --frames 3000 --report 3000 --settings '{"machine":"triforce"}' --axis 5:255 "$fz" > "$work/fzgas.txt"
+	if [ -s "$work/fzrel.txt" ] && cmp -s "$work/fzg.txt" "$work/fzrel.txt" && [ -s "$work/fzgas.txt" ] && ! cmp -s "$work/fzg.txt" "$work/fzgas.txt"; then
+		PASS "fzero trigger leg - released triggers are the untouched machine, a pressed gas is not"
+	else FAIL "fzero trigger leg - released $(cmp -s "$work/fzg.txt" "$work/fzrel.txt" && echo same || echo DIFFERENT), pressed $(cmp -s "$work/fzg.txt" "$work/fzgas.txt" && echo SAME || echo different)"; fi
+else
+	SKIP "fzero legs (DOLPHIN_FZERO not set) - would prove a still screen does not fill memory and a released trigger reads released"
+fi
+
 # ---- tier 2c: a Wii channel (.wad) ------------------------------------------
 # WiiWare and Virtual Console titles (chimera#148): the .wad is installed into
 # the in-memory NAND - ES's whole import, content by content, ending in a
