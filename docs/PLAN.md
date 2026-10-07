@@ -44,10 +44,12 @@ no UI, no real audio device).
   `patches/` (numbered, applied by `apply-patches.sh`), each a build option or a
   weak hook rather than a deletion, per the house rule. Prefer solving problems in
   the adapter over patching.
-- **Own build, no CMake**: one curated source list (`waterbox/sources.mk`), compiled
-  twice - natively (the reference and debugging build) and for the guest (musl
-  toolchain, `-mcmodel=large -fno-pic`). Same sources, same defines. The PPSSPP
-  pattern verbatim.
+- **Upstream's CMake, run twice**: natively (`waterbox/build-native.sh`, the
+  reference and debugging build) and for the guest (`waterbox/build-guest.sh`,
+  the musl toolchain through `waterbox/guest-toolchain.cmake`), with the flags
+  both share in `waterbox/configure-flags.sh`. Same sources, same defines. The
+  first plan was a curated source list without CMake; it did not survive
+  Dolphin's size.
 - **CPU**: interpreter first (deterministic, no codegen), cached interpreter once
   the gate is green, Jit64 later still - miniBox hosts RWX pages (PCSX2's VIF
   generator and the scanline JIT already run there), so the JIT is an
