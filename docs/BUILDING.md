@@ -310,6 +310,7 @@ Skipped without content or without Chimera:
 | wii disc, wii rerecord, machine, widescreen, wii save refusal, wii save round-trip | a Wii disc image: `DOLPHIN_WII_DISC`, or the path the `wiidisc=` line names |
 | triforce, triforce rerecord, triforce coin, triforce machine | `DOLPHIN_TRIFORCE`, a Triforce image |
 | fzero still-screen, fzero trigger | `DOLPHIN_FZERO`, a Triforce image whose game sits on a still screen and reads the analog triggers |
+| mkgp camera, mkgp route | `DOLPHIN_MKGP`, Mario Kart Arcade GP's image, and `DOLPHIN_SEGABOOT`, the Triforce's `segaboot.gcm` |
 | wad | `DOLPHIN_WAD`, a Wii channel `.wad` |
 | gl:rebuild-at-zero | `chimera-run` and the installed package: `<chimera>/build/meson-linux/chimera-run` and `<chimera>/build/Cores/dolphin.chimeraCore` |
 
@@ -362,7 +363,11 @@ declarations; this is what they say.
 - **Machine**: the `machine` setting says which console the project is:
   `gamecube` (the default), `wii` or `triforce`. An image of another machine
   is a load error.
-- **Firmware**: none. The package declares no firmware. A GameCube boots
+- **Firmware**: one file, and only for a Triforce cabinet that asks for it.
+  `segaboot.gcm` (2 MiB, header `RELSAB` / `SegaBoot`) is the Triforce's own
+  firmware and what its TEST switch lands in; it is required when the
+  machine is `triforce` and **Triforce: SegaBoot Firmware** is on, which it
+  is not by default. A GameCube boots
   without a dump: the IPL is emulated in software, and the free DSP ROMs ship
   inside the package (step 3 above).
 - **Save data**, optional, up to 2 files: on a GameCube the raw memory card

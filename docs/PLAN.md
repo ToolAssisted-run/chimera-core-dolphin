@@ -324,3 +324,40 @@ config after boot, and unset they read as dolphin's defaults),
 `options:names` (the sandbox refuses a bogus value for each declared name,
 naming it), `options:crisp` (GPU: 2x doubles the picture, native ==
 sandbox on this driver).
+
+## A cabinet's memory, its network and its firmware (chimera#184, 2026-10-08)
+
+Mario Kart Arcade GP stopped at "CAMERA CHECKING...", and three separate
+things were between it and its title screen.
+
+- **The network.** The media board gives a game sockets, and Dolphin maps
+  them onto the host's own. The sandbox has none: the call itself ended the
+  machine. The native reference has them, so it went looking for the
+  cabinet's camera on whatever network the build machine is on. Neither does
+  now (`Chimera_NoHostNetwork`, patch 0025): the game is told its socket
+  could not be made, and draws "CAMERA ERROR - please call an attendant",
+  pixel for pixel what it drew when the connection was refused instead.
+- **The backup memory.** A cabinet keeps its settings in battery-backed
+  memory on the baseboard and the media board, and Dolphin keeps each in a
+  file under User/Triforce. Those files could never be created here, in
+  either flavor, so every write went nowhere. They are memory now
+  (`Chimera_MemoryFile`): named, sparse, alive for the life of the process so
+  that a cabinet restarting itself finds what it wrote, and part of every
+  whole-machine savestate. A new machine starts with them empty. One
+  implementation over fopencookie for both flavors, not each libc's fmemopen,
+  whose rules differ.
+- **The firmware.** Dolphin ignores the TEST switch unless SegaBoot, the
+  Triforce's own firmware, is there ("trying to access the test menu without
+  SegaBoot present will cause a crash"), and the core had no way to be given
+  it. It is firmware a project supplies, behind a setting that is off by
+  default (user-decided, 2026-10-08): `triforce_segaboot`, file
+  `segaboot.gcm`. Optional firmware does not exist in Chimera, so the
+  condition is spelled.
+
+With all three: TEST at the camera error says "CAMERA DISABLED", the Item
+button walks on to the link check, and after its countdown the attract loop
+runs - native and sandbox identical in picture, sound and memory at every
+sampled frame (the `mkgp route` leg; `mkgp camera` holds the machine alive at
+the error without the firmware). The native runner's `--press` now knows the
+panel's Coin, Service and Test wires, which it sent to the pad's buttons.
+

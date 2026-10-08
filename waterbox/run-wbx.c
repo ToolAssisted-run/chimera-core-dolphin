@@ -151,6 +151,9 @@ int main(int argc, char **argv)
 {
 	const char *core = NULL, *game = NULL, *sysdir = NULL, *ramOut = NULL, *savedataOut = NULL;
 	const char *saves[8]; int nsaves = 0;
+	/* --firmware <id>=<file>: a firmware file, mounted under its id as the
+	 * frontend mounts it (the Triforce's segaboot.gcm) */
+	const char *firmware[4]; int nfirmware = 0;
 	const char *settingsJson = NULL;
 	long frames = 60, report = 10;
 	int rewind = 0, rerecord = 0;
@@ -167,6 +170,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--ram-out") && i + 1 < argc) ramOut = argv[++i];
 		else if (!strcmp(argv[i], "--savedata-out") && i + 1 < argc) savedataOut = argv[++i];
 		else if (!strcmp(argv[i], "--save") && i + 1 < argc && nsaves < 8) saves[nsaves++] = argv[++i];
+		else if (!strcmp(argv[i], "--firmware") && i + 1 < argc && nfirmware < 4) firmware[nfirmware++] = argv[++i];
 		else if (!strcmp(argv[i], "--settings") && i + 1 < argc) settingsJson = argv[++i];
 		else if (!strcmp(argv[i], "--rewind")) rewind = 1;
 		else if (!strcmp(argv[i], "--rerecord")) rerecord = 1;
@@ -214,6 +218,16 @@ int main(int argc, char **argv)
 	if (r.error_message[0]) { fprintf(stderr, "mount rom.name: %s\n", r.error_message); return 1; }
 
 	if (mountTree(h, "/sys", sysdir) != 0) return 1;
+
+	for (int i = 0; i < nfirmware; i++) {
+		char id[128];
+		const char *eq = strchr(firmware[i], '=');
+		if (!eq || eq == firmware[i] || (size_t)(eq - firmware[i]) >= sizeof id) {
+			fprintf(stderr, "--firmware wants <id>=<file>\n"); return 1;
+		}
+		memcpy(id, firmware[i], (size_t)(eq - firmware[i])); id[eq - firmware[i]] = 0;
+		if (mountFile(h, id, eq + 1) != 0) return 1;
+	}
 
 	/* the settings channel, exactly as the frontend mounts it */
 	if (settingsJson) {

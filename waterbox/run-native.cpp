@@ -122,6 +122,8 @@ int main(int argc, char** argv)
     }
     else if (!strcmp(argv[i], "--wii-savedata") && i + 1 < argc)
       chimera_dolphin_set_wii_savedata(argv[++i]);
+    else if (!strcmp(argv[i], "--segaboot") && i + 1 < argc)
+      chimera_dolphin_set_sega_boot(argv[++i]);  // the Triforce's firmware
     else if (!strcmp(argv[i], "--print-options"))
       print_options = true;
     else if (!strcmp(argv[i], "--set") && i + 1 < argc)
@@ -209,8 +211,15 @@ int main(int argc, char** argv)
   for (long f = 1; f <= frames; f++)
   {
     for (int pi = 0; pi < presses; pi++)
-      chimera_dolphin_set_button(0, press[pi].index,
-                                 f >= press[pi].first && f < press[pi].first + press[pi].count);
+    {
+      // the wire order of the panel, as the sandbox's entry point reads it:
+      // twelve buttons, then a Triforce cabinet's Coin, Service and Test
+      const bool held = f >= press[pi].first && f < press[pi].first + press[pi].count;
+      if (press[pi].index < 12)
+        chimera_dolphin_set_button(0, press[pi].index, held);
+      else
+        chimera_dolphin_set_switch(0, 14 - press[pi].index, held);
+    }
     chimera_dolphin_frame();
     if (!chimera_dolphin_input_was_read())
       lag++;

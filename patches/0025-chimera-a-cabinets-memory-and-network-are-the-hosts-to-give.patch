@@ -1,0 +1,88 @@
+--- a/Source/Core/Core/HW/DVD/AMMediaboard.cpp
++++ b/Source/Core/Core/HW/DVD/AMMediaboard.cpp
+@@ -357,8 +357,21 @@ static bool SafeCopyFromEmu(Memory::MemoryManager& memory, u8* destination, u32
+   return true;
+ }
+ 
++// chimera: a host embedding the core may keep the media board's memory itself
++// (the weak symbol is null in every other build), and may have no network to
++// lend a game's sockets (null, or false, and the host's network is used).
++extern "C" std::FILE* Chimera_MemoryFile(const char* name) __attribute__((weak));
++extern "C" bool Chimera_NoHostNetwork() __attribute__((weak));
++// ...and may hold the board's firmware under a name of its own, read-only
++// (null, or a null answer, and it is User/Triforce/segaboot.gcm as ever).
++extern "C" const char* Chimera_SegaBootPath() __attribute__((weak));
++
+ static GuestSocket socket_(int af, int type, int protocol)
+ {
++  // chimera: no network to lend: the game is told its socket could not be made.
++  if (Chimera_NoHostNetwork && Chimera_NoHostNetwork())
++    return INVALID_GUEST_SOCKET;
++
+   const auto guest_socket = GetAvailableGuestSocket();
+   if (guest_socket == INVALID_GUEST_SOCKET)
+     return INVALID_GUEST_SOCKET;
+@@ -419,6 +432,9 @@ void InitKeys(u32 key_a, u32 key_b, u32 key_c)
+ 
+ static File::IOFile OpenOrCreateFile(const std::string& filename)
+ {
++  if (Chimera_MemoryFile)
++    return File::IOFile(Chimera_MemoryFile(filename.c_str()));
++
+   // Try opening for read/write first
+   if (File::Exists(filename))
+     return File::IOFile(filename, "rb+");
+@@ -495,7 +511,9 @@ void Init()
+     PanicAlertFmt("Failed to open/create: {}", base_path + "backup.bin");
+ 
+   // This is the firmware for the Triforce
+-  const std::string sega_boot_filename = base_path + "segaboot.gcm";
++  const char* const hosted_sega_boot = Chimera_SegaBootPath ? Chimera_SegaBootPath() : nullptr;
++  const std::string sega_boot_filename =
++      hosted_sega_boot ? hosted_sega_boot : base_path + "segaboot.gcm";
+ 
+   if (!File::Exists(sega_boot_filename))
+   {
+@@ -504,7 +522,7 @@ void Init()
+     return;
+   }
+ 
+-  File::IOFile sega_boot(sega_boot_filename, "rb+");
++  File::IOFile sega_boot(sega_boot_filename, hosted_sega_boot ? "rb" : "rb+");
+   if (!sega_boot.IsOpen())
+   {
+     PanicAlertFmt("Failed to read: {}", sega_boot_filename);
+@@ -2408,6 +2426,9 @@ void DoState(PointerWrap& p)
+       if (!created_sockets.IsFdSet(GuestSocket(i)))
+         continue;
+ 
++      // chimera: none was made, so none is made again
++      if (Chimera_NoHostNetwork && Chimera_NoHostNetwork())
++        continue;
+       s_sockets[i] = socket(AF_INET, SOCK_STREAM, 0);
+     }
+   }
+--- a/Source/Core/Core/HW/EXI/EXI_DeviceBaseboard.cpp
++++ b/Source/Core/Core/HW/EXI/EXI_DeviceBaseboard.cpp
+@@ -45,12 +45,20 @@ void GenerateInterrupt(int flag)
+   system.GetExpansionInterface().UpdateInterrupts();
+ }
+ 
++// chimera: the weak symbol is null in every other build, and the file is a file.
++extern "C" std::FILE* Chimera_MemoryFile(const char* name) __attribute__((weak));
++
+ CEXIBaseboard::CEXIBaseboard(Core::System& system) : IEXIDevice(system)
+ {
+   std::string backup_filename(fmt::format("{}tribackup_{}.bin", File::GetUserPath(D_TRIUSER_IDX),
+                                           SConfig::GetInstance().GetGameID()));
+ 
+-  m_backup = File::IOFile(backup_filename, "rb+");
++  // chimera: a host embedding the core may keep the board's backup memory
++  // itself, as memory, where there is no file system to keep it in.
++  if (Chimera_MemoryFile)
++    m_backup = File::IOFile(Chimera_MemoryFile(backup_filename.c_str()));
++  else
++    m_backup = File::IOFile(backup_filename, "rb+");
+   if (!m_backup.IsOpen())
+   {
+     m_backup = File::IOFile(backup_filename, "wb+");

@@ -319,6 +319,43 @@ else
 	SKIP "fzero legs (DOLPHIN_FZERO not set) - would prove a still screen does not fill memory and a released trigger reads released"
 fi
 
+# ---- tier 2b3: Mario Kart Arcade GP, its camera and the test switch ----------
+# chimera#184. DOLPHIN_MKGP names the image and DOLPHIN_SEGABOOT the Triforce's
+# firmware (segaboot.gcm); neither ships here. The game looks for its
+# cabinet's camera over the media board's network, finds none and stops at
+# "CAMERA ERROR - please call an attendant"; pressing TEST there turns the
+# camera off, and the Item button walks on to the link check and the attract
+# loop. Three things used to stand in the way: the socket call ended the
+# sandboxed machine outright (and the native one went looking on the host's
+# network), the cabinet's backup memory was files nobody could create, and
+# the emulator ignores TEST without SegaBoot, which the core could not be
+# given.
+mk="${DOLPHIN_MKGP:-}"
+sb="${DOLPHIN_SEGABOOT:-}"
+if [ -n "$mk" ] && [ -f "$mk" ] && [ -n "$sb" ] && [ -f "$sb" ]; then
+	route="--press 2500:30:14 --press 3000:10:0"   # TEST at the error, then Item
+	# no firmware: the machine must still be RUNNING at the camera error
+	wbx --frames 3000 --report 3000 --settings '{"machine":"triforce"}' "$mk" > "$work/mk0.txt"
+	if grep -q '^frame  *3000 .* vid 640x480 ' "$work/mk0.txt"; then
+		PASS "mkgp camera leg - the camera check ends in an error screen, not in the end of the machine"
+	else FAIL "mkgp camera leg - the machine was not running at frame 3000: $(tail -1 "$work/mk0.txt" | cut -c1-80)"; fi
+	# with firmware, the route: both flavors, every 600 frames, RAM and all
+	nat mk1 --frames 7200 --report 600 --machine triforce --segaboot "$sb" $route "$mk" > "$work/mk1.txt"
+	wbx --frames 7200 --report 600 --settings '{"machine":"triforce","triforce_segaboot":true}' \
+		--firmware "segaboot.gcm=$sb" $route "$mk" > "$work/mkg.txt"
+	# the same presses on a cabinet without the firmware: TEST is not heard
+	wbx --frames 7200 --report 600 --settings '{"machine":"triforce"}' $route "$mk" > "$work/mkn.txt"
+	if [ "$(wc -l < "$work/mk1.txt")" -ne 12 ] || ! cmp -s "$work/mk1.txt" "$work/mkg.txt"; then
+		FAIL "mkgp route leg - native and sandbox part on the way to the attract loop: $(diff "$work/mk1.txt" "$work/mkg.txt" | sed -n 2p | cut -c1-70)"
+	elif [ "$(tail -1 "$work/mkg.txt" | awk '{ print $7 }')" = "$(tail -1 "$work/mkn.txt" | awk '{ print $7 }')" ]; then
+		FAIL "mkgp route leg - TEST changed nothing: the picture at 7200 is the one a cabinet without firmware shows"
+	else
+		PASS "mkgp route leg - TEST turns the camera off and the game reaches its attract loop, native == sandbox in picture, sound and memory at every 600 frames"
+	fi
+else
+	SKIP "mkgp legs (DOLPHIN_MKGP and DOLPHIN_SEGABOOT not set) - would prove the camera error is survivable and the test switch gets past it"
+fi
+
 # ---- tier 2c: a Wii channel (.wad) ------------------------------------------
 # WiiWare and Virtual Console titles (chimera#148): the .wad is installed into
 # the in-memory NAND - ES's whole import, content by content, ending in a

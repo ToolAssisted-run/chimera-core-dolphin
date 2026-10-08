@@ -36,6 +36,9 @@ void chimera_dolphin_set_switch(int pad, int index, int state);
 int chimera_dolphin_triforce(void);
 // a Wii project's saves to start from: the .zip Export Save Data wrote
 void chimera_dolphin_set_wii_savedata(const char* zip_path);
+// The Triforce's SegaBoot firmware, by the name it can be opened under; null
+// or empty for a cabinet without it (no test menu). Before chimera_dolphin_init.
+void chimera_dolphin_set_sega_boot(const char* path);
 void chimera_dolphin_set_cpu_core(const char* name);
 void chimera_dolphin_set_port(int port, int present);
 int chimera_dolphin_port_present(int port);

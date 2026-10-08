@@ -75,6 +75,16 @@ ECL_EXPORT int Init(void)
   chimera_dolphin_set_machine(machine);
   chimera_dolphin_set_memcard_a(wbx_setting_bool("memcard_a", 1));
   chimera_dolphin_set_widescreen(wbx_setting_bool("widescreen", 0));
+  // The Triforce's firmware is mounted under its id when the project asked
+  // for it; a cabinet that was given none has no test menu.
+  if (wbx_setting_bool("triforce_segaboot", 0))
+  {
+    if (FILE* f = fopen("segaboot.gcm", "rb"))
+    {
+      fclose(f);
+      chimera_dolphin_set_sega_boot("segaboot.gcm");
+    }
+  }
   // a Wii's saves arrive as a .zip in the Save data slot; a GameCube's are
   // its card images, which the machine opens by name itself
   {

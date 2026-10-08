@@ -16,6 +16,8 @@
 #include <utility>
 #include <vector>
 #include <thread>
+#include <array>
+#include <map>
 
 #include "Common/FileUtil.h"
 #include "Common/Config/Config.h"
@@ -553,6 +555,158 @@ static bool WaitForState(Core::State want)
     Core::HostDispatchJobs(Sys());
     std::this_thread::yield();
   }
+}
+
+// ---- a Triforce cabinet's memory, and its unplugged network --------------
+//
+// A cabinet keeps its settings and its bookkeeping in battery-backed memory on
+// the baseboard and on the media board, and Dolphin keeps each of those in a
+// file under User/Triforce. A sandboxed machine has no way to create a file,
+// and a deterministic one should not start from whatever the last run left on
+// somebody's disk. So here each is MEMORY: named, sparse, and alive for as
+// long as the process is - a cabinet that restarts itself after its test menu
+// finds what it wrote, which is the whole reason the memory has a battery.
+// It is ordinary guest memory, so every whole-machine savestate carries it,
+// and a new machine starts with it empty, as a board with a new battery does.
+//
+// Without this the files simply failed to open, in both flavors, and every
+// write went nowhere: Mario Kart Arcade GP's "CAMERA ERROR - please call an
+// attendant" could not be answered, because turning the camera off in the
+// test menu is a write to this memory (chimera issue #184).
+//
+// One implementation for both flavors, over fopencookie, rather than each
+// libc's fmemopen: the two differ in where a write may land and what a read
+// past the end returns, and the two flavors must not.
+namespace
+{
+struct MemoryFile
+{
+  std::map<u64, std::array<u8, 4096>> pages;  // only what was written
+  u64 size = 0;
+};
+struct MemoryHandle
+{
+  MemoryFile* file;
+  u64 pos;
+};
+
+std::map<std::string, MemoryFile>& MemoryFiles()
+{
+  static std::map<std::string, MemoryFile> files;
+  return files;
+}
+
+ssize_t MemoryRead(void* cookie, char* out, size_t count)
+{
+  auto* h = static_cast<MemoryHandle*>(cookie);
+  if (h->pos >= h->file->size)
+    return 0;
+  count = static_cast<size_t>(std::min<u64>(count, h->file->size - h->pos));
+  for (size_t done = 0; done < count;)
+  {
+    const u64 at = h->pos + done;
+    const size_t in_page = static_cast<size_t>(at & 4095);
+    const size_t take = std::min(count - done, size_t{4096} - in_page);
+    const auto page = h->file->pages.find(at >> 12);
+    if (page == h->file->pages.end())
+      std::memset(out + done, 0, take);  // never written: a hole reads as zeros
+    else
+      std::memcpy(out + done, page->second.data() + in_page, take);
+    done += take;
+  }
+  h->pos += count;
+  return static_cast<ssize_t>(count);
+}
+
+ssize_t MemoryWrite(void* cookie, const char* in, size_t count)
+{
+  auto* h = static_cast<MemoryHandle*>(cookie);
+  for (size_t done = 0; done < count;)
+  {
+    const u64 at = h->pos + done;
+    const size_t in_page = static_cast<size_t>(at & 4095);
+    const size_t take = std::min(count - done, size_t{4096} - in_page);
+    auto [page, fresh] = h->file->pages.try_emplace(at >> 12);
+    if (fresh)
+      page->second.fill(0);
+    std::memcpy(page->second.data() + in_page, in + done, take);
+    done += take;
+  }
+  h->pos += count;
+  h->file->size = std::max(h->file->size, h->pos);
+  return static_cast<ssize_t>(count);
+}
+
+int MemorySeek(void* cookie, off_t* offset, int whence)
+{
+  auto* h = static_cast<MemoryHandle*>(cookie);
+  const s64 base = whence == SEEK_SET ? 0 :
+                   whence == SEEK_CUR ? static_cast<s64>(h->pos) :
+                   whence == SEEK_END ? static_cast<s64>(h->file->size) : -1;
+  if (base < 0 || base + static_cast<s64>(*offset) < 0)
+    return -1;
+  h->pos = static_cast<u64>(base + static_cast<s64>(*offset));
+  *offset = static_cast<off_t>(h->pos);
+  return 0;
+}
+
+int MemoryClose(void* cookie)
+{
+  delete static_cast<MemoryHandle*>(cookie);  // the handle; the memory stays
+  return 0;
+}
+}  // namespace
+
+// The hook patch 0025 asks: the file of this name, as memory. Opened again
+// under the same name it is the same memory.
+extern "C" std::FILE* Chimera_MemoryFile(const char* name)
+{
+  auto* handle = new MemoryHandle{&MemoryFiles()[name], 0};
+  cookie_io_functions_t io{};
+  io.read = MemoryRead;
+  io.write = MemoryWrite;
+  io.seek = MemorySeek;
+  io.close = MemoryClose;
+  std::FILE* file = fopencookie(handle, "r+b", io);
+  if (!file)
+  {
+    delete handle;
+    return nullptr;
+  }
+  // No buffer of stdio's between the board and its memory: what was written
+  // is there to be read, whether or not anybody remembered to flush.
+  std::setvbuf(file, nullptr, _IONBF, 0);
+  return file;
+}
+
+// And the network the media board offers a game: there is none. Dolphin maps a
+// game's sockets onto the host's own, which a sandbox has not got (the call
+// alone ended the machine) and which the native reference has - so that one
+// went looking for the cabinet's camera on whatever network this machine is
+// on. Neither does now; the game is told the socket could not be made, and
+// draws exactly what it drew when the connection failed instead.
+extern "C" bool Chimera_NoHostNetwork()
+{
+  return true;
+}
+
+// The Triforce's own firmware, SegaBoot: the program the media board starts
+// from, and what a cabinet's TEST switch lands in. Dolphin looks for it at
+// User/Triforce/segaboot.gcm and, without it, ignores the switch altogether -
+// "trying to access the test menu without SegaBoot present will cause a
+// crash". Here it is firmware the project supplies: the entry point that knows
+// where it was mounted says so before the machine is built, and a machine
+// that was given none has no test menu, as before.
+static std::string s_sega_boot_path;
+
+extern "C" void chimera_dolphin_set_sega_boot(const char* path)
+{
+  s_sega_boot_path = path ? path : "";
+}
+
+extern "C" const char* Chimera_SegaBootPath()
+{
+  return s_sega_boot_path.empty() ? nullptr : s_sega_boot_path.c_str();
 }
 
 extern "C" {
