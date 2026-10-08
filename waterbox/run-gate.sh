@@ -400,6 +400,15 @@ fi
 # it never calls StateLoaded and never mints a new context id. It is also the
 # only leg that needs a built and installed package.
 #
+# It holds one more thing since 2026-10-08. The rebuild frees every vertex
+# loader, and the machine's vertex format groups pointed at them: the first
+# primitive after a load ran a freed loader, which showed only where the heap
+# had been reused - Pro Rally 2002's demo race on a GTX 1060 died on every
+# load, and swiss never did. Patch 0026 sets those pointers to null as well as
+# marking them for refresh, so the same mistake is now a null dereference on
+# the first draw after ANY restore, this one included: with the marking taken
+# out, the restore to frame 2 below kills the core (measured).
+#
 # WHAT IT DOES NOT STAND IN FOR (chimera docs/gates.md, E): swiss is a homebrew
 # file manager, not a game - it draws a menu, so its texture cache never holds
 # much - and llvmpipe is not a driver. What this proves is that the rebuild

@@ -361,3 +361,48 @@ sampled frame (the `mkgp route` leg; `mkgp camera` holds the machine alive at
 the error without the firmware). The native runner's `--press` now knows the
 panel's Coin, Service and Test wires, which it sent to the pad's buttons.
 
+
+## The rebuild after a load left the machine pointing at freed loaders (2026-10-08)
+
+Found measuring what each GPU core draws after a load (chimera#190, on a GTX
+1060): in Pro Rally 2002's demo race the core died on the first frame after
+ANY load - a greenzone restore at two different frames, and a whole state
+saved and loaded at the same frame. "VertexManager: Buffer not large enough
+for all vertices! (2551574084 > 16777216)", then a jump into data. In the
+intro film before it, nothing.
+
+**Why.** A load mints a new GL context id and `ChimeraRebuildGLObjects`
+(patch 0020) remakes everything the OGL backend holds. It called
+`VertexLoaderManager::Clear()`, which frees every vertex loader and every
+native vertex format - upstream's only use of it is shutdown. Three things
+still pointed at what it freed: `g_main_vertex_loaders` and
+`g_preprocess_vertex_loaders`, the loader of each vertex format group, looked
+up again only when the group is marked dirty; and `s_current_vtx_fmt`. So the
+first primitive after a load ran a freed loader. With one vertex format on
+screen the freed memory was still as it had been and nothing showed, which is
+why swiss and the film - and the rewind tests of 2026-09-15, which rewound in
+the film - never saw it. In a 3D scene the heap had been reused: the stride
+and the compiled code were whatever lay there.
+
+The vertex manager also kept the pipeline it last drew with across
+`g_shader_cache->Reload()`, which destroys every pipeline; upstream never
+reloads without `InvalidatePipelineObject()` (VideoConfig.cpp).
+
+**Patch 0026.** `VertexLoaderManager::ChimeraClearAndForget()`: Clear(), the
+two loader tables and the current format set to null, everything marked for
+refresh; and the rebuild invalidates the vertex manager's pipeline object.
+Null on purpose: a loader that is not looked up again is then a null
+dereference on the first draw in any scene, not a read of freed memory that
+mostly works.
+
+**Measured, GTX 1060, the same loads:** the race survives a greenzone restore
+at frame 7800 and a whole-state load at 7500, and all twelve frames drawn
+after each are the pictures they were (two of them differ in a few pixels by
+4 levels at most). The film still has two black frames after a load (frames 2
+and 3): the half-drawn EFB is not in a state. That is a picture, not a crash,
+and is not touched here.
+
+**The gate.** `gl:rebuild-at-zero` restores swiss through the engine and now
+holds this too: with the marking taken out of the patch, its restore to frame
+2 kills the core at address 0xfc; with it, the leg passes. Core gate 16 ok, 6
+skipped (no discs), none failed.

@@ -1,0 +1,77 @@
+diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.cpp b/Source/Core/VideoBackends/OGL/OGLGfx.cpp
+--- a/Source/Core/VideoBackends/OGL/OGLGfx.cpp
++++ b/Source/Core/VideoBackends/OGL/OGLGfx.cpp
+@@ -775,12 +775,20 @@
+   // (releasing their programs) and makes new ones on the live context, both
+   // through the map ReacquireContextObjects left untouched. The cached native
+   // vertex formats (per-format VAOs) are dropped so each is made again on
+-  // demand.
+-  VertexLoaderManager::Clear();
++  // demand - and with them the vertex loaders, which the machine's vertex
++  // format groups point at: ChimeraClearAndForget makes each be looked up
++  // again, where a bare Clear() left the next primitive running a freed one.
++  VertexLoaderManager::ChimeraClearAndForget();
+   g_texture_cache->Invalidate();
+   g_texture_cache->ChimeraDropStagingTextures();
+   g_framebuffer_manager->RecreateEFBFramebuffer(g_ActiveConfig.iEFBScale);
+   g_framebuffer_manager->RecompileShaders();
++  // Reload() destroys every pipeline, and the vertex manager keeps the one it
++  // last drew with until its configuration changes. Upstream never reloads
++  // without telling it (VideoConfig.cpp, on a host configuration change); a
++  // state taken between two draws of one configuration brought that pointer
++  // back with it.
++  g_vertex_manager->InvalidatePipelineObject();
+   g_shader_cache->Reload();
+ 
+   // Nothing the renderer thought was bound still is.
+diff --git a/Source/Core/VideoCommon/VertexLoaderManager.cpp b/Source/Core/VideoCommon/VertexLoaderManager.cpp
+--- a/Source/Core/VideoCommon/VertexLoaderManager.cpp
++++ b/Source/Core/VideoCommon/VertexLoaderManager.cpp
+@@ -76,6 +76,35 @@
+   s_native_vertex_map.clear();
+ }
+ 
++// chimera: Clear() for a renderer that goes on running. Clear() frees every
++// vertex loader and every native vertex format, which is all a shutdown needs;
++// the GL rebuild after a savestate load (OGLGfx::ChimeraRebuildGLObjects) calls
++// it with the machine about to draw again, and three things still pointed at
++// what it freed:
++//
++//   - g_main_vertex_loaders / g_preprocess_vertex_loaders, the loader of each
++//     vertex format group, looked up again only when the group is marked dirty;
++//   - s_current_vtx_fmt, compared by address with the next loader's format.
++//
++// So the first primitive after a load ran a loader that had been freed. In a
++// scene with one vertex format the freed memory was still intact and nothing
++// showed; in a 3D scene it had been handed out again, the loader's stride and
++// its compiled code were whatever was there now, and the core died asking for
++// two and a half billion bytes of vertex buffer and then jumping into data
++// (Pro Rally 2002's demo race on a GTX 1060, on every load).
++//
++// The pointers are set to null as well as marked for refresh, on purpose: a
++// loader that is not looked up again is then a null dereference on the first
++// draw, in any scene, and not a read of freed memory that mostly works.
++void ChimeraClearAndForget()
++{
++  Clear();
++  g_main_vertex_loaders.fill(nullptr);
++  g_preprocess_vertex_loaders.fill(nullptr);
++  s_current_vtx_fmt = nullptr;
++  MarkAllDirty();
++}
++
+ void UpdateVertexArrayPointers()
+ {
+   // Anything to update?
+diff --git a/Source/Core/VideoCommon/VertexLoaderManager.h b/Source/Core/VideoCommon/VertexLoaderManager.h
+--- a/Source/Core/VideoCommon/VertexLoaderManager.h
++++ b/Source/Core/VideoCommon/VertexLoaderManager.h
+@@ -27,6 +27,8 @@
+ 
+ void Init();
+ void Clear();
++// chimera: Clear(), and nothing left pointing at what it freed (the GL rebuild after a load)
++void ChimeraClearAndForget();
+ 
+ void MarkAllDirty();
+ 
