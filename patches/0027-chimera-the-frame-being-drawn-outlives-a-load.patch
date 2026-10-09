@@ -1,0 +1,255 @@
+diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.cpp b/Source/Core/VideoBackends/OGL/OGLGfx.cpp
+--- a/Source/Core/VideoBackends/OGL/OGLGfx.cpp
++++ b/Source/Core/VideoBackends/OGL/OGLGfx.cpp
+@@ -32,6 +32,7 @@
+ 
+ #include <algorithm>
+ #include <cstdint>
++#include <cstring>
+ #include <string_view>
+ 
+ namespace OGL
+@@ -865,9 +866,211 @@
+ // initial value is.
+ static bool s_chimera_gl_state_loaded = false;
+ 
++// chimera: the context the backend's GL objects came from. In emulated memory,
++// so a savestate restores it like everything else: after a load it holds the
++// saving session's id, which differs from the one now live.
++static uint64_t s_chimera_saved_context = 0;
++
++// chimera: THE FRAME BEING DRAWN IS ON THE CARD AND NOWHERE ELSE (chimera issue 190).
++//
++// The EFB is two textures, colour and depth. A game that shows thirty pictures a
++// second draws one over two fields: into the EFB during the first, copied out to
++// the XFB - which IS in the machine's memory - during the second. A state taken
++// between the two holds the machine and nothing of the EFB, the rebuild above
++// makes the EFB again empty, and the copy that follows copied nothing: two
++// black fields after a load, on a real card, in a film; in a 3D scene caught
++// half drawn, half a scene.
++//
++// And one thing more went with it. A savestate can be taken mid-batch, with
++// vertices queued and not yet drawn; the rebuild abandons that batch
++// (RecreateStreamBuffers), because the buffer it was written into is gone.
++//
++// So the engine's word before a state is taken (the StateSaving export) is
++// answered here: whatever is queued is drawn - it would have been drawn at the
++// next state change anyway, into the same pixels - and then both textures are
++// read into a block of the core's own memory, which a state carries, each band
++// compared and written only where it changed. After a load the rebuild puts them
++// back into the new EFB.
++//
++// Not into the machine's memory: nothing of the GameCube's holds an EFB, and a
++// copy written there would be bytes a run that took no state does not have.
++//
++// Not carried: a multisampled EFB, which cannot be read as it is, and a
++// stereoscopic one; they come back empty, as every EFB did.
++namespace
++{
++constexpr u64 CHIMERA_EFB_MAGIC = 0x4246454C4F444843ull;
++
++struct ChimeraEFBHeader
++{
++  u64 magic;
++  u32 width;
++  u32 height;
++  u64 unused;
++};
++
++u8* s_chimera_efb_block = nullptr;
++size_t s_chimera_efb_block_bytes = 0;
++u8* s_chimera_efb_scratch = nullptr;
++size_t s_chimera_efb_scratch_bytes = 0;
++// The block is the EFB as it is now: set by a copy, cleared when a frame begins.
++// In a state, so one taken with the core left untold says so itself.
++bool s_chimera_efb_current = false;
++// What the last load brought, noted after it and used by the rebuild that follows.
++bool s_chimera_efb_usable = false;
++
++void ChimeraDrainGLErrors()
++{
++  while (glGetError() != GL_NO_ERROR)
++  {
++  }
++}
++
++// One texture of the EFB, four bytes a texel, band by band against what the
++// block holds at `at`. False if the card refused the read.
++bool ChimeraReadEFBTexture(GLuint id, u32 width, u32 height, GLenum format, GLenum type, u8* at)
++{
++  const size_t row_bytes = size_t(width) * 4;
++  const u32 band = std::max<u32>(1, u32(s_chimera_efb_scratch_bytes / row_bytes));
++  for (u32 y = 0; y < height; y += band)
++  {
++    const u32 rows = std::min(band, height - y);
++    const size_t bytes = row_bytes * rows;
++    glGetTextureSubImage(id, 0, 0, GLint(y), 0, GLsizei(width), GLsizei(rows), 1, format, type,
++                         GLsizei(s_chimera_efb_scratch_bytes), s_chimera_efb_scratch);
++    if (glGetError() != GL_NO_ERROR)
++    {
++      ChimeraDrainGLErrors();
++      return false;
++    }
++    u8* const dst = at + row_bytes * y;
++    if (std::memcmp(dst, s_chimera_efb_scratch, bytes) != 0)
++      std::memcpy(dst, s_chimera_efb_scratch, bytes);
++  }
++  return true;
++}
++
++// The EFB a state carried, into the EFB the rebuild has just made.
++void ChimeraRestoreEFB()
++{
++  if (!s_chimera_efb_block || !g_framebuffer_manager)
++    return;
++  const ChimeraEFBHeader* const header = reinterpret_cast<const ChimeraEFBHeader*>(s_chimera_efb_block);
++  AbstractTexture* const color = g_framebuffer_manager->GetEFBColorTexture();
++  AbstractTexture* const depth = g_framebuffer_manager->GetEFBDepthTexture();
++  if (header->magic != CHIMERA_EFB_MAGIC || !color || !depth || color->IsMultisampled() ||
++      color->GetLayers() != 1 || color->GetWidth() != header->width ||
++      color->GetHeight() != header->height ||
++      color->GetFormat() != AbstractTextureFormat::RGBA8 ||
++      depth->GetFormat() != AbstractTextureFormat::D32F)
++  {
++    return;
++  }
++  const size_t plane = size_t(header->width) * header->height * 4;
++  if (sizeof(ChimeraEFBHeader) + plane * 2 > s_chimera_efb_block_bytes)
++    return;
++  const u8* const pixels = s_chimera_efb_block + sizeof(ChimeraEFBHeader);
++
++  GLint unpack_buffer = 0, unpack_alignment = 4, unpack_row_length = 0;
++  glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpack_buffer);
++  glGetIntegerv(GL_UNPACK_ALIGNMENT, &unpack_alignment);
++  glGetIntegerv(GL_UNPACK_ROW_LENGTH, &unpack_row_length);
++  if (unpack_buffer != 0)
++    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
++  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
++  glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
++  glTextureSubImage3D(static_cast<OGL::OGLTexture*>(color)->GetGLTextureId(), 0, 0, 0, 0,
++                      GLsizei(header->width), GLsizei(header->height), 1, GL_RGBA,
++                      GL_UNSIGNED_BYTE, pixels);
++  glTextureSubImage3D(static_cast<OGL::OGLTexture*>(depth)->GetGLTextureId(), 0, 0, 0, 0,
++                      GLsizei(header->width), GLsizei(header->height), 1, GL_DEPTH_COMPONENT,
++                      GL_FLOAT, pixels + plane);
++  glPixelStorei(GL_UNPACK_ALIGNMENT, unpack_alignment);
++  glPixelStorei(GL_UNPACK_ROW_LENGTH, unpack_row_length);
++  if (unpack_buffer != 0)
++    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, GLuint(unpack_buffer));
++  ChimeraDrainGLErrors();
++}
++}  // namespace
++
++// chimera: where the copy goes, given once during Init: a block a state carries
++// and a scratch one it does not (the driver takes both before any state exists).
++extern "C" void chimera_dolphin_gl_efb_blocks(void* block, size_t block_bytes, void* scratch,
++                                              size_t scratch_bytes)
++{
++  s_chimera_efb_block = static_cast<u8*>(block);
++  s_chimera_efb_block_bytes = block_bytes;
++  s_chimera_efb_scratch = static_cast<u8*>(scratch);
++  s_chimera_efb_scratch_bytes = scratch_bytes;
++}
++
+ extern "C" void chimera_dolphin_gl_state_loaded(void)
+ {
+   s_chimera_gl_state_loaded = true;
++  s_chimera_efb_usable = s_chimera_efb_current;
++}
++
++// chimera: told before a state is taken, the machine stopped at a field's end.
++extern "C" void chimera_dolphin_gl_state_saving(void)
++{
++  if (!s_chimera_efb_block || !s_chimera_efb_scratch || !(&chimera_gl_context_id) ||
++      !g_framebuffer_manager || !g_vertex_manager)
++    return;
++  // Another context than the objects': a state taken after a load and before
++  // the next frame. The names here are nobody's, and the copy the load brought
++  // is still the EFB.
++  const uint64_t live = chimera_gl_context_id();
++  if (live == 0 || live != s_chimera_saved_context)
++    return;
++
++  g_vertex_manager->Flush();
++  g_framebuffer_manager->FlushEFBPokes();
++
++  ChimeraEFBHeader* const header = reinterpret_cast<ChimeraEFBHeader*>(s_chimera_efb_block);
++  AbstractTexture* const color = g_framebuffer_manager->GetEFBColorTexture();
++  AbstractTexture* const depth = g_framebuffer_manager->GetEFBDepthTexture();
++  ChimeraEFBHeader fresh = {};
++  bool carried = false;
++  if (color && depth && !color->IsMultisampled() && color->GetLayers() == 1 &&
++      color->GetFormat() == AbstractTextureFormat::RGBA8 &&
++      depth->GetFormat() == AbstractTextureFormat::D32F && color->GetWidth() > 0 &&
++      color->GetHeight() > 0)
++  {
++    const u32 width = color->GetWidth(), height = color->GetHeight();
++    const size_t plane = size_t(width) * height * 4;
++    if (sizeof(ChimeraEFBHeader) + plane * 2 <= s_chimera_efb_block_bytes &&
++        size_t(width) * 4 <= s_chimera_efb_scratch_bytes)
++    {
++      GLint pack_buffer = 0, pack_alignment = 4, pack_row_length = 0;
++      glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack_buffer);
++      glGetIntegerv(GL_PACK_ALIGNMENT, &pack_alignment);
++      glGetIntegerv(GL_PACK_ROW_LENGTH, &pack_row_length);
++      if (pack_buffer != 0)
++        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
++      glPixelStorei(GL_PACK_ALIGNMENT, 1);
++      glPixelStorei(GL_PACK_ROW_LENGTH, 0);
++      ChimeraDrainGLErrors();
++      u8* const pixels = s_chimera_efb_block + sizeof(ChimeraEFBHeader);
++      carried = ChimeraReadEFBTexture(static_cast<OGL::OGLTexture*>(color)->GetGLTextureId(), width,
++                                      height, GL_RGBA, GL_UNSIGNED_BYTE, pixels) &&
++                ChimeraReadEFBTexture(static_cast<OGL::OGLTexture*>(depth)->GetGLTextureId(), width,
++                                      height, GL_DEPTH_COMPONENT, GL_FLOAT, pixels + plane);
++      glPixelStorei(GL_PACK_ALIGNMENT, pack_alignment);
++      glPixelStorei(GL_PACK_ROW_LENGTH, pack_row_length);
++      if (pack_buffer != 0)
++        glBindBuffer(GL_PIXEL_PACK_BUFFER, GLuint(pack_buffer));
++      if (carried)
++      {
++        fresh.magic = CHIMERA_EFB_MAGIC;
++        fresh.width = width;
++        fresh.height = height;
++      }
++    }
++  }
++  if (std::memcmp(header, &fresh, sizeof(fresh)) != 0)
++    *header = fresh;
++  if (s_chimera_efb_current != carried)
++    s_chimera_efb_current = carried;
+ }
+ 
+ extern "C" void chimera_dolphin_gl_frame_start(void)
+@@ -885,19 +1088,24 @@
+   if (live == 0)
+     return;
+ 
+-  // The remembered context lives in emulated memory, so a savestate restores it
+-  // like everything else: on a fresh load it holds the save session's id, which
+-  // differs from the one now live.
+-  static uint64_t s_saved_context = 0;
+-  if (live != s_saved_context && (s_saved_context != 0 || after_load))
++  // What the last load brought of the EFB, taken and cleared like the flag above.
++  const bool efb_usable = after_load && s_chimera_efb_usable;
++  s_chimera_efb_usable = false;
++
++  if (live != s_chimera_saved_context && (s_chimera_saved_context != 0 || after_load))
+   {
+     if (OGL::OGLGfx* gfx = OGL::GetOGLGfx())
+     {
+       WARN_LOG_FMT(VIDEO,
+                    "chimera: these GL objects came from another context ({}, now {}); rebuilding",
+-                   s_saved_context, live);
++                   s_chimera_saved_context, live);
+       gfx->ChimeraRebuildGLObjects();
++      if (efb_usable)
++        ChimeraRestoreEFB();
+     }
+   }
+-  s_saved_context = live;
++  s_chimera_saved_context = live;
++  // A frame is about to run: what the block holds stops being the EFB.
++  if (s_chimera_efb_current)
++    s_chimera_efb_current = false;
+ }

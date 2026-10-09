@@ -2,6 +2,7 @@
 // and the waterbox ABI shim are its two callers.
 // SPDX-License-Identifier: MIT
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -12,6 +13,11 @@ const char* chimera_dolphin_error(void);
 int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* game_path);
 void chimera_dolphin_frame(void);
 void chimera_dolphin_state_loaded(void);
+// Before a state is taken, and where the copy it makes of the EFB goes (see
+// dolphin-driver.cpp). The blocks are given once, before chimera_dolphin_init.
+void chimera_dolphin_state_saving(void);
+void chimera_dolphin_efb_blocks(void* block, size_t block_bytes, void* scratch,
+                                size_t scratch_bytes);
 uint8_t* chimera_dolphin_ram_ptr(void);
 int64_t chimera_dolphin_ram_size(void);
 void chimera_dolphin_shutdown(void);

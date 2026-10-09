@@ -463,6 +463,64 @@ else
 	fi
 fi
 
+# The gl:picture-after-load leg (chimera issue 190): the frames drawn right
+# after a state load are the pictures those frames had.
+#
+# They were not. The EFB - the frame being drawn, colour and depth - is two
+# textures on the card; a state held the machine and nothing of them, and the
+# rebuild after a load made the EFB again empty. A frame drawn before the
+# state and copied out to the XFB after it copied nothing: on a GTX 1060 a
+# film showed two black fields after every load. Patch 0027 copies both
+# textures into the core's own memory when the engine says a state is about to
+# be taken (the StateSaving export), with whatever geometry was still queued
+# drawn first, and the rebuild puts them back.
+#
+# What it measures, with chimera-run --settle-probe: six frames of swiss are
+# remembered as first drawn, the machine is put back on the frame before them
+# - a state on every frame, so the load lands exactly there - and each is
+# drawn again and compared. All six must come back exactly. And the same run
+# with CHIMERA_NO_STATE_SAVING=1, the engine leaving the core untold, must
+# NOT: that is the control, and it is how every load used to be.
+#
+# WHAT IT DOES NOT STAND IN FOR: swiss is a homebrew menu and llvmpipe is not
+# a driver. The proof on a film and on a 3D scene, on a real card, is in
+# docs/PLAN.md, with what is still not carried.
+if [ -z "$chimera_root" ]; then
+	SKIP "gl:picture-after-load leg - needs chimera-run and an installed dolphin.chimeraCore (set CHIMERA_ROOT); would prove the frames after a load are the pictures they were"
+else
+	pal="$work/glafterload"
+	mkdir -p "$pal"
+	printf '[Input]\nLogKey:#\n' > "$pal/none.txt"
+	palrun() { # <movie> <out> <extra args...>
+		palmovie="$1"; palout="$2"; shift 2
+		CHIMERA_PICTURE_TRACE=1 timeout 600 "$chimera_root/build/meson-linux/chimera-run" \
+			"$chimera_root/build/Cores/dolphin.chimeraCore" "$swiss" "$palmovie" \
+			--settings '{"renderer":"opengl-hw"}' --frames 70 "$@" > "$palout" 2>&1 || true
+	}
+	exact() { grep -c ": 0.00% of pixels differ, 0.00% by more than 8 (largest 0)" "$1"; }
+	palrun "$pal/none.txt" "$pal/record.log" --record "$pal/movie.txt"
+	if [ ! -s "$pal/movie.txt" ]; then
+		FAIL "gl:picture-after-load leg - could not record a movie to go back through (see $pal/record.log)"
+	else
+		palprobe="--gpu --greenzone 4096 --greenzone-period 1 --greenzone-max-stride 1 --settle-probe 60,6"
+		palrun "$pal/movie.txt" "$pal/told.log" $palprobe
+		CHIMERA_NO_STATE_SAVING=1 palrun "$pal/movie.txt" "$pal/untold.log" $palprobe
+		if grep -q "^chimera gl: no context" "$pal/told.log"; then
+			SKIP "gl:picture-after-load leg - this build or this machine gives the bridge no GL context"
+		elif grep -q "^usage: chimera-run" "$pal/told.log"; then
+			SKIP "gl:picture-after-load leg - this chimera-run has no --settle-probe (an older Chimera)"
+		elif ! grep -q "pictrace: load, on frame 60:" "$pal/told.log" || ! grep -q "pictrace: load, on frame 60:" "$pal/untold.log"; then
+			FAIL "gl:picture-after-load leg - the load did not land on the frame before the ones compared, so nothing was measured (see $pal/told.log)"
+		elif ! grep -q "^settle-probe: the picture is wrong up to drawn frame" "$pal/untold.log"; then
+			FAIL "gl:picture-after-load leg - the control drew every frame right with the core left untold: this program does not show the loss, or the engine told the core anyway (see $pal/untold.log)"
+		elif [ "$(exact "$pal/told.log")" -ne 6 ]; then
+			FAIL "gl:picture-after-load leg - $(exact "$pal/told.log") of 6 frames after a load came back exactly: $(grep -m1 '^settle-probe: the picture is wrong' "$pal/told.log" || echo 'within the probe'"'"'s tolerance, not exact') (see $pal/told.log)"
+		else
+			PASS "gl:picture-after-load leg - six frames drawn right after a load are bit for bit the pictures they were; with the core left untold they are not"
+		fi
+	fi
+fi
+
 say ""
 say "$pass ok, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]

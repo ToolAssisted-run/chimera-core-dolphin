@@ -406,3 +406,75 @@ and is not touched here.
 holds this too: with the marking taken out of the patch, its restore to frame
 2 kills the core at address 0xfc; with it, the leg passes. Core gate 16 ok, 6
 skipped (no discs), none failed.
+
+## The frame being drawn outlives a load (chimera issue 190, 2026-10-09)
+
+Measured on a GTX 1060 with Pro Rally 2002's intro film: the first frame
+after a load was right, the next two were black, and the fourth was right.
+
+**Why.** The EFB - the frame being drawn - is two textures on the card,
+colour and depth. A game showing thirty pictures a second draws one over two
+fields: into the EFB during the first, copied out to the XFB during the
+second, and the XFB is in the machine's memory, which is where this core's
+picture comes from (patch 0021). A state taken between the two holds the
+machine and nothing of the EFB. The rebuild after a load
+(`ChimeraRebuildGLObjects`) makes the EFB again, cleared, and the copy that
+follows copied nothing. And one thing more went the same way: a state can be
+taken with vertices queued and not yet drawn, and the rebuild abandons that
+batch, because the stream buffer it was written into is gone.
+
+**The answer** (patch 0027). The core answers the engine's `StateSaving`,
+told before every state is taken:
+
+- whatever the vertex manager has queued is drawn (`Flush`), and so are
+  pending EFB pokes - they would have been drawn at the next state change
+  anyway, into the same pixels;
+- both EFB textures are read, band by band, into a block of the core's own
+  memory (96 MiB of address space mapped during Init, with 4 MiB of scratch
+  the state does not carry), each band compared and written only where it
+  changed;
+- after a load the rebuild puts them back into the new EFB.
+
+Not into the machine's memory: nothing of the GameCube's holds an EFB. A
+state taken after a load and before the next frame copies nothing - the GL
+names it would read are the old context's, and the copy the load brought is
+still right.
+
+**Proved on the card.** The film, twelve frames after a load, each bit for
+bit the picture it was: through the greenzone, on an even frame and an odd
+one, from states of frames nobody read, at 1x and at 2x. With the core left
+untold (`CHIMERA_NO_STATE_SAVING=1`) the second and third are black, as
+before: the control. In the demo race, eight rewinds of 250 frames end on
+the picture, the system RAM and the ARAM of a run that never took a state,
+and a state on every frame leaves all three the same told and untold - which
+is what says drawing the queued batch early changes nothing the machine can
+see.
+
+**What it costs.** At 1x the two textures are 2.7 MB. In the race a stored
+state is about 2 MB larger and the history spaces itself to one state in
+four frames where it kept every frame; the run itself is no slower (189 s
+told, 202 s untold, 161 s with no history at all).
+
+**What is still not right after a load, and is not this.** Both are the
+texture cache's copies - of the EFB, and of the XFB - which are textures on
+the card too, and which the rebuild throws away and lets be made again from
+the machine's memory:
+
+- In the demo race at 1x, the second and third frames after a load differ
+  from a straight run in up to 0.47% of their pixels, by at most 9 levels,
+  with and without this patch. A copy of the EFB the game was about to
+  sample comes back at the precision the machine's memory keeps it in. (My
+  reading of the size and the timing; the copy itself was not traced.)
+- Above 1x, where the picture is the crisp XFB the presenter fetched (patch
+  0023), the first frame after a load in the race is the machine's own XFB
+  at 640x448 instead of the 1280x896 one. The content is right and the size
+  is not. The film does not show it: it copies a new XFB in that frame.
+
+Carrying the texture cache's copies the way the EFB is carried would answer
+both. Not done here.
+
+**Not carried at all:** a multisampled EFB and a stereoscopic one, which come
+back empty as every EFB used to.
+
+**The gate:** `gl:picture-after-load`, swiss through llvmpipe: six frames
+exact after a load, and wrong with the core left untold.

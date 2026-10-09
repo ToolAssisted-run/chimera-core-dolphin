@@ -798,6 +798,30 @@ void chimera_dolphin_state_loaded(void)
     chimera_dolphin_gl_state_loaded();
 }
 
+extern "C" void chimera_dolphin_gl_state_saving(void);
+extern "C" void chimera_dolphin_gl_efb_blocks(void* block, size_t block_bytes, void* scratch,
+                                              size_t scratch_bytes);
+
+/* Told before every state the engine takes, the machine stopped at a field's
+ * end. Under the OGL backend the frame being drawn - the EFB, colour and depth
+ * - is on the card and in no state; it is copied into the core's own memory
+ * here, with whatever geometry was still queued drawn first, and the rebuild
+ * after a load puts it back (patch 0027, chimera issue 190). The software
+ * renderer's EFB is memory already. */
+void chimera_dolphin_state_saving(void)
+{
+  if (s_gl_backend)
+    chimera_dolphin_gl_state_saving();
+}
+
+/* Where that copy goes, handed over during Init - before any state exists, so
+ * that every state there will ever be has the block mapped at the same place. */
+void chimera_dolphin_efb_blocks(void* block, size_t block_bytes, void* scratch,
+                                size_t scratch_bytes)
+{
+  chimera_dolphin_gl_efb_blocks(block, block_bytes, scratch, scratch_bytes);
+}
+
 void chimera_dolphin_frame(void)
 {
   // chimera: before the machine steps, give the OGL backend the chance to

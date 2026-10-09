@@ -11,6 +11,8 @@
 #include <cstring>
 #include <initializer_list>
 
+#include <sys/mman.h>
+
 #include <emulibc.h>
 #include <waterbox_settings.h>
 #include <waterbox_slots.h>
@@ -135,6 +137,23 @@ ECL_EXPORT int Init(void)
     chimera_dolphin_set_port(i, strcmp(val, "gc-controller") == 0);
   }
 
+  // Where the OGL backend copies the frame it is drawing before a state is
+  // taken (chimera_dolphin_state_saving): a block of ordinary memory, which a
+  // state carries, and a scratch one it does not. NOW and not on first use:
+  // whether a page is mapped at all is part of every state, so memory taken
+  // after the first state exists is unmapped again by loading it. Address
+  // space, not memory - pages are committed as they are written, and under the
+  // software renderer none ever is. Room for an EFB at four times the
+  // machine's resolution, colour and depth.
+  {
+    static const size_t kEfbBlock = (size_t)96 << 20, kEfbScratch = (size_t)4 << 20;
+    void* block = mmap(nullptr, kEfbBlock, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    void* scratch = alloc_invisible(kEfbScratch);
+    if (block != MAP_FAILED && scratch)
+      chimera_dolphin_efb_blocks(block, kEfbBlock, scratch, kEfbScratch);
+  }
+
   if (!chimera_dolphin_init("/user", "/sys", romName))
   {
     snprintf(g_loadError, sizeof g_loadError, "%s", chimera_dolphin_error());
@@ -207,6 +226,13 @@ ECL_EXPORT void FrameAdvance(uint64_t /*input*/)
 ECL_EXPORT void StateLoaded(void)
 {
   chimera_dolphin_state_loaded();
+}
+
+// Optional export: the engine calls it before every state it takes. See
+// chimera_dolphin_state_saving in dolphin-driver.cpp.
+ECL_EXPORT void StateSaving(void)
+{
+  chimera_dolphin_state_saving();
 }
 
 ECL_EXPORT int InputWasRead(void)
