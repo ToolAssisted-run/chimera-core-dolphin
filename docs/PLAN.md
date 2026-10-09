@@ -470,11 +470,74 @@ the machine's memory:
   at 640x448 instead of the 1280x896 one. The content is right and the size
   is not. The film does not show it: it copies a new XFB in that frame.
 
-Carrying the texture cache's copies the way the EFB is carried would answer
-both. Not done here.
+Carrying the texture cache's copies the way the EFB is carried answers both:
+the next section, done the same day.
 
 **Not carried at all:** a multisampled EFB and a stereoscopic one, which come
 back empty as every EFB used to.
 
 **The gate:** `gl:picture-after-load`, swiss through llvmpipe: six frames
 exact after a load, and wrong with the core left untold.
+
+
+## The texture cache's copies outlive a load too (chimera issue 190, 2026-10-09)
+
+User-decided, 2026-10-09 ("fix it now"), after the section above ended on two
+things still wrong after a load. Patch 0028.
+
+**What they were.** A copy the game makes of the EFB to sample later, and the
+copy of the EFB that becomes the XFB, are textures on the card, kept in the
+texture cache. The rebuild after a load emptied the cache
+(`TextureCacheBase::Invalidate`) and each copy was made again, when next
+asked for, by decoding the machine's memory - at the precision and the size
+the machine keeps it in. Hence a 3D scene a few levels off for one drawn
+frame, and above 1x - where the picture IS such a copy (patch 0023) - one
+frame at 640 wide.
+
+**And a third thing, which is the machine and not the picture.** Dolphin
+defers writing a copy into the machine's memory (`DeferEFBCopies`, on by
+default and left on: turning it off would move when those bytes land, and
+with it every movie made so far). Until the game signals the end of its
+drawing the bytes are in a staging texture - on the card. A state taken in
+between held a machine whose memory was still to be written, and
+`Invalidate` began by flushing: reading a staging texture of a context that
+was gone, and writing whatever came back into the machine's memory. No run
+here was seen to go wrong by it; it was found reading the code.
+
+**The answer.** The block the EFB is copied into holds a table of records
+now, and `StateSaving` adds to it:
+
+- every copy in the cache worth a state's bytes - a copy of the EFB always;
+  a copy of the XFB only above 1x, since at 1x the picture is the machine's
+  own memory and the copy is never looked at - named by its cache entry, one
+  layer of RGBA8;
+- the bytes of every copy still waiting to be written to RAM, read out of
+  its staging texture.
+
+After a load, and BEFORE the rebuild makes anything in the new context
+(`ChimeraLetGo`): nothing is flushed, every GL object the cache holds is
+dropped at once rather than into the pool, and the entries a state carried
+pixels for stay in the cache. After the rebuild each is given a new texture
+and its pixels; a waiting copy gets a stand-in staging texture and its
+bytes, and `FlushEFBCopy` writes those when it would have written the
+texture's. An entry with nothing carried goes, as all of them used to.
+
+The block is 512 MiB of address space, mapped during Init.
+
+**Proved on the card.** The demo race, twelve frames after a load, each bit
+for bit the picture it was: at 1x through the greenzone and by a whole
+state and from states of frames nobody read, where the second and third
+used to be off in up to 0.47% of their pixels; at 2x from the first frame,
+where the first used to be the machine's own 640x448. With the core left
+untold both are back, as before: the control. The film is exact as it was.
+Eight rewinds of 250 frames end on the picture and the system RAM of a run
+that never took a state, at 1x and at 2x, and a state on every frame leaves
+picture, system RAM and ARAM the same as that run.
+
+**Not carried:** copies of a stereoscopic EFB (two layers), and anything
+past the block or the 1024 records, which are made again from the machine's
+memory as before.
+
+**The gate:** `gl:picture-after-load` runs at 2x as well, where the picture
+is one of these copies: six frames exact, and the first two wrong with the
+core left untold.

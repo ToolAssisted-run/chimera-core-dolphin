@@ -144,9 +144,10 @@ ECL_EXPORT int Init(void)
   // after the first state exists is unmapped again by loading it. Address
   // space, not memory - pages are committed as they are written, and under the
   // software renderer none ever is. Room for an EFB at four times the
-  // machine's resolution, colour and depth.
+  // machine's resolution, colour and depth, and for the copies of it the
+  // texture cache holds.
   {
-    static const size_t kEfbBlock = (size_t)96 << 20, kEfbScratch = (size_t)4 << 20;
+    static const size_t kEfbBlock = (size_t)512 << 20, kEfbScratch = (size_t)5 << 20;
     void* block = mmap(nullptr, kEfbBlock, PROT_READ | PROT_WRITE,
                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     void* scratch = alloc_invisible(kEfbScratch);

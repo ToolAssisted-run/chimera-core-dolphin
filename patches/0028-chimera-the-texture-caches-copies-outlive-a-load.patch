@@ -1,0 +1,712 @@
+diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.cpp b/Source/Core/VideoBackends/OGL/OGLGfx.cpp
+--- a/Source/Core/VideoBackends/OGL/OGLGfx.cpp
++++ b/Source/Core/VideoBackends/OGL/OGLGfx.cpp
+@@ -25,6 +25,7 @@
+ #include "VideoCommon/PerfQueryBase.h"
+ #include "VideoCommon/Present.h"
+ #include "VideoCommon/ShaderCache.h"
++#include "VideoCommon/AbstractStagingTexture.h"
+ #include "VideoCommon/TextureCacheBase.h"
+ #include "VideoCommon/VertexLoaderManager.h"
+ #include "VideoCommon/VertexManagerBase.h"
+@@ -33,6 +34,7 @@
+ #include <algorithm>
+ #include <cstdint>
+ #include <cstring>
++#include <vector>
+ #include <string_view>
+ 
+ namespace OGL
+@@ -780,8 +782,9 @@
+   // format groups point at: ChimeraClearAndForget makes each be looked up
+   // again, where a bare Clear() left the next primitive running a freed one.
+   VertexLoaderManager::ChimeraClearAndForget();
+-  g_texture_cache->Invalidate();
+-  g_texture_cache->ChimeraDropStagingTextures();
++  // (The texture cache was emptied before this function was entered - see
++  // chimera_dolphin_gl_frame_start - so that what it keeps across a load is
++  // not thrown away here.)
+   g_framebuffer_manager->RecreateEFBFramebuffer(g_ActiveConfig.iEFBScale);
+   g_framebuffer_manager->RecompileShaders();
+   // Reload() destroys every pipeline, and the vertex manager keeps the one it
+@@ -895,30 +898,102 @@
+ // Not into the machine's memory: nothing of the GameCube's holds an EFB, and a
+ // copy written there would be bytes a run that took no state does not have.
+ //
++// THE TEXTURE CACHE'S COPIES ARE THE SAME CASE, TWICE. A copy the game made of
++// the EFB to sample later is a texture on the card; made again from the
++// machine's memory after a load it comes back at the precision the machine
++// keeps it in, and a 3D scene's first frame after a load was a few levels off
++// in a few pixels in a thousand. Above 1x the picture itself is such a copy -
++// the crisp XFB the presenter fetches (patch 0023) - and the first frame after
++// a load was the machine's own, at the machine's size. Both are read into the
++// same block, an entry of the cache named by its address, and after a load the
++// entry stays, is given a new texture, and gets its pixels back.
++//
++// AND A COPY NOT YET WRITTEN TO RAM IS THE MACHINE, NOT THE PICTURE. Dolphin
++// defers writing a copy into the machine's memory until the game signals the
++// end of its drawing; until then the bytes are in a staging texture - on the
++// card. A state taken in between held a machine whose memory was still to be
++// written, and the rebuild flushed a staging texture of a context that was
++// gone: whatever that read went into the machine's memory. The bytes are
++// carried too, and written when they would have been.
++//
+ // Not carried: a multisampled EFB, which cannot be read as it is, and a
+-// stereoscopic one; they come back empty, as every EFB did.
++// stereoscopic one (two layers); they come back empty, as every EFB did, and
++// the cache's copies of them are made again from the machine's memory.
+ namespace
+ {
+-constexpr u64 CHIMERA_EFB_MAGIC = 0x4246454C4F444843ull;
++constexpr u64 CHIMERA_SHADOW_MAGIC = 0x3257444853584843ull;
++constexpr u32 CHIMERA_SHADOW_MAX_RECORDS = 1024;
++
++// What a record's pixels are.
++enum : u32
++{
++  CHIMERA_EFB_COLOR = 1,
++  CHIMERA_EFB_DEPTH = 2,
++  // a copy of the EFB or the XFB the texture cache holds, named by its entry
++  CHIMERA_CACHE_COPY = 3,
++  // the bytes of a copy still waiting to be written to the machine's memory
++  CHIMERA_PENDING_COPY = 4,
++};
+ 
+-struct ChimeraEFBHeader
++struct ChimeraShadowHeader
+ {
+   u64 magic;
++  u32 count;
++  u32 unused;
++  u64 end;  // bytes of pixels in use
++};
++
++struct ChimeraShadowRecord
++{
++  u64 owner;  // the TCacheEntry, for the two kinds that have one
++  u64 offset;
++  u64 bytes;
++  u32 kind;
+   u32 width;
+   u32 height;
+-  u64 unused;
++  u32 flags;  // the texture's AbstractTextureFlag bits
+ };
+ 
++constexpr size_t CHIMERA_SHADOW_TABLE_BYTES =
++    sizeof(ChimeraShadowHeader) + CHIMERA_SHADOW_MAX_RECORDS * sizeof(ChimeraShadowRecord);
++
+ u8* s_chimera_efb_block = nullptr;
+ size_t s_chimera_efb_block_bytes = 0;
++// Scratch a state does not carry: the record table as it is about to be, then
++// one band of a texture at a time.
+ u8* s_chimera_efb_scratch = nullptr;
+ size_t s_chimera_efb_scratch_bytes = 0;
+-// The block is the EFB as it is now: set by a copy, cleared when a frame begins.
++// The block is the card as it is now: set by a copy, cleared when a frame begins.
+ // In a state, so one taken with the core left untold says so itself.
+ bool s_chimera_efb_current = false;
+ // What the last load brought, noted after it and used by the rebuild that follows.
+ bool s_chimera_efb_usable = false;
+ 
++ChimeraShadowHeader* ChimeraHeader()
++{
++  return reinterpret_cast<ChimeraShadowHeader*>(s_chimera_efb_block);
++}
++ChimeraShadowRecord* ChimeraRecords()
++{
++  return reinterpret_cast<ChimeraShadowRecord*>(s_chimera_efb_block + sizeof(ChimeraShadowHeader));
++}
++u8* ChimeraPixels()
++{
++  return s_chimera_efb_block + CHIMERA_SHADOW_TABLE_BYTES;
++}
++size_t ChimeraPixelBytes()
++{
++  return s_chimera_efb_block_bytes - CHIMERA_SHADOW_TABLE_BYTES;
++}
++u8* ChimeraBand()
++{
++  return s_chimera_efb_scratch + CHIMERA_SHADOW_TABLE_BYTES;
++}
++size_t ChimeraBandBytes()
++{
++  return s_chimera_efb_scratch_bytes - CHIMERA_SHADOW_TABLE_BYTES;
++}
++
+ void ChimeraDrainGLErrors()
+ {
+   while (glGetError() != GL_NO_ERROR)
+@@ -926,50 +1001,94 @@
+   }
+ }
+ 
+-// One texture of the EFB, four bytes a texel, band by band against what the
++// One layer of a texture, four bytes a texel, band by band against what the
+ // block holds at `at`. False if the card refused the read.
+-bool ChimeraReadEFBTexture(GLuint id, u32 width, u32 height, GLenum format, GLenum type, u8* at)
++bool ChimeraReadTexture(GLuint id, u32 width, u32 height, GLenum format, GLenum type, u8* at)
+ {
+   const size_t row_bytes = size_t(width) * 4;
+-  const u32 band = std::max<u32>(1, u32(s_chimera_efb_scratch_bytes / row_bytes));
++  const u32 band = std::max<u32>(1, u32(ChimeraBandBytes() / row_bytes));
+   for (u32 y = 0; y < height; y += band)
+   {
+     const u32 rows = std::min(band, height - y);
+     const size_t bytes = row_bytes * rows;
+     glGetTextureSubImage(id, 0, 0, GLint(y), 0, GLsizei(width), GLsizei(rows), 1, format, type,
+-                         GLsizei(s_chimera_efb_scratch_bytes), s_chimera_efb_scratch);
++                         GLsizei(ChimeraBandBytes()), ChimeraBand());
+     if (glGetError() != GL_NO_ERROR)
+     {
+       ChimeraDrainGLErrors();
+       return false;
+     }
+     u8* const dst = at + row_bytes * y;
+-    if (std::memcmp(dst, s_chimera_efb_scratch, bytes) != 0)
+-      std::memcpy(dst, s_chimera_efb_scratch, bytes);
++    if (std::memcmp(dst, ChimeraBand(), bytes) != 0)
++      std::memcpy(dst, ChimeraBand(), bytes);
+   }
+   return true;
+ }
+ 
+-// The EFB a state carried, into the EFB the rebuild has just made.
+-void ChimeraRestoreEFB()
++const ChimeraShadowRecord* ChimeraFind(u32 kind, u64 owner)
++{
++  const ChimeraShadowHeader* const header = ChimeraHeader();
++  const ChimeraShadowRecord* const records = ChimeraRecords();
++  for (u32 i = 0; i < header->count; i++)
++  {
++    if (records[i].kind == kind && records[i].owner == owner)
++      return &records[i];
++  }
++  return nullptr;
++}
++
++bool ChimeraShadowUsable()
+ {
+-  if (!s_chimera_efb_block || !g_framebuffer_manager)
++  return s_chimera_efb_block && ChimeraHeader()->magic == CHIMERA_SHADOW_MAGIC &&
++         ChimeraHeader()->count <= CHIMERA_SHADOW_MAX_RECORDS;
++}
++
++// A texture the cache could carry: one layer, one level, RGBA8 - which every
++// copy of the EFB or the XFB is, unless the EFB is stereoscopic.
++bool ChimeraCarriable(const AbstractTexture* texture)
++{
++  return texture && !texture->IsMultisampled() && texture->GetLayers() == 1 &&
++         texture->GetLevels() == 1 && texture->GetFormat() == AbstractTextureFormat::RGBA8 &&
++         texture->GetWidth() > 0 && texture->GetHeight() > 0;
++}
++
++// Which of the cache's copies are worth a state's bytes. A copy of the EFB
++// always: the game samples it. A copy of the XFB only when the picture is taken
++// from one (above 1x, patch 0023); at 1x the picture is the machine's own
++// memory and the copy is never looked at.
++bool ChimeraWanted(const TCacheEntry* entry)
++{
++  if (entry->is_xfb_copy || entry->is_xfb_container)
++    return !g_ActiveConfig.bChimeraXfbFromRamOnly;
++  return entry->is_efb_copy;
++}
++
++// Before a load's rebuild makes anything: every GL object the texture cache
++// holds is dropped, and the entries a state carried pixels for stay.
++void ChimeraLetGoOfTextureCache(bool keep)
++{
++  if (!g_texture_cache)
+     return;
+-  const ChimeraEFBHeader* const header = reinterpret_cast<const ChimeraEFBHeader*>(s_chimera_efb_block);
+-  AbstractTexture* const color = g_framebuffer_manager->GetEFBColorTexture();
+-  AbstractTexture* const depth = g_framebuffer_manager->GetEFBDepthTexture();
+-  if (header->magic != CHIMERA_EFB_MAGIC || !color || !depth || color->IsMultisampled() ||
+-      color->GetLayers() != 1 || color->GetWidth() != header->width ||
+-      color->GetHeight() != header->height ||
+-      color->GetFormat() != AbstractTextureFormat::RGBA8 ||
+-      depth->GetFormat() != AbstractTextureFormat::D32F)
++  if (!keep || !ChimeraShadowUsable())
+   {
++    g_texture_cache->ChimeraLetGo(nullptr, nullptr);
+     return;
+   }
+-  const size_t plane = size_t(header->width) * header->height * 4;
+-  if (sizeof(ChimeraEFBHeader) + plane * 2 > s_chimera_efb_block_bytes)
++  g_texture_cache->ChimeraLetGo(
++      [](TCacheEntry* entry) {
++        return ChimeraFind(CHIMERA_CACHE_COPY, reinterpret_cast<u64>(entry)) != nullptr;
++      },
++      [](TCacheEntry* entry) {
++        return ChimeraFind(CHIMERA_PENDING_COPY, reinterpret_cast<u64>(entry)) != nullptr;
++      });
++}
++
++// The card as a state carried it, into what the rebuild has just made.
++void ChimeraRestoreShadow()
++{
++  if (!ChimeraShadowUsable() || !g_framebuffer_manager || !g_texture_cache)
+     return;
+-  const u8* const pixels = s_chimera_efb_block + sizeof(ChimeraEFBHeader);
++  u8* const pixels = ChimeraPixels();
+ 
+   GLint unpack_buffer = 0, unpack_alignment = 4, unpack_row_length = 0;
+   glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpack_buffer);
+@@ -979,12 +1098,74 @@
+     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+-  glTextureSubImage3D(static_cast<OGL::OGLTexture*>(color)->GetGLTextureId(), 0, 0, 0, 0,
+-                      GLsizei(header->width), GLsizei(header->height), 1, GL_RGBA,
+-                      GL_UNSIGNED_BYTE, pixels);
+-  glTextureSubImage3D(static_cast<OGL::OGLTexture*>(depth)->GetGLTextureId(), 0, 0, 0, 0,
+-                      GLsizei(header->width), GLsizei(header->height), 1, GL_DEPTH_COMPONENT,
+-                      GL_FLOAT, pixels + plane);
++  ChimeraDrainGLErrors();
++
++  const auto fits = [](const ChimeraShadowRecord* rec) {
++    return rec && rec->bytes == u64(rec->width) * rec->height * 4 &&
++           rec->offset + rec->bytes <= ChimeraPixelBytes();
++  };
++
++  // the EFB
++  AbstractTexture* const color = g_framebuffer_manager->GetEFBColorTexture();
++  AbstractTexture* const depth = g_framebuffer_manager->GetEFBDepthTexture();
++  const ChimeraShadowRecord* const color_rec = ChimeraFind(CHIMERA_EFB_COLOR, 0);
++  const ChimeraShadowRecord* const depth_rec = ChimeraFind(CHIMERA_EFB_DEPTH, 0);
++  if (fits(color_rec) && fits(depth_rec) && color && depth && !color->IsMultisampled() &&
++      color->GetLayers() == 1 && color->GetWidth() == color_rec->width &&
++      color->GetHeight() == color_rec->height && depth_rec->width == color_rec->width &&
++      depth_rec->height == color_rec->height &&
++      color->GetFormat() == AbstractTextureFormat::RGBA8 &&
++      depth->GetFormat() == AbstractTextureFormat::D32F)
++  {
++    glTextureSubImage3D(static_cast<OGL::OGLTexture*>(color)->GetGLTextureId(), 0, 0, 0, 0,
++                        GLsizei(color_rec->width), GLsizei(color_rec->height), 1, GL_RGBA,
++                        GL_UNSIGNED_BYTE, pixels + color_rec->offset);
++    glTextureSubImage3D(static_cast<OGL::OGLTexture*>(depth)->GetGLTextureId(), 0, 0, 0, 0,
++                        GLsizei(depth_rec->width), GLsizei(depth_rec->height), 1,
++                        GL_DEPTH_COMPONENT, GL_FLOAT, pixels + depth_rec->offset);
++    ChimeraDrainGLErrors();
++  }
++
++  // the texture cache's copies: each entry that stayed gets a texture of the
++  // new context and its pixels, or leaves
++  std::vector<TCacheEntry*> lost;
++  const ChimeraShadowHeader* const header = ChimeraHeader();
++  const ChimeraShadowRecord* const records = ChimeraRecords();
++  for (u32 i = 0; i < header->count; i++)
++  {
++    const ChimeraShadowRecord& rec = records[i];
++    TCacheEntry* const entry = reinterpret_cast<TCacheEntry*>(rec.owner);
++    if (rec.kind == CHIMERA_CACHE_COPY)
++    {
++      bool ok = false;
++      if (fits(&rec))
++      {
++        const TextureConfig config(rec.width, rec.height, 1, 1, 1, AbstractTextureFormat::RGBA8,
++                                   rec.flags, AbstractTextureType::Texture_2DArray);
++        if (g_texture_cache->ChimeraReseat(entry, config))
++        {
++          glTextureSubImage3D(static_cast<OGL::OGLTexture*>(entry->texture.get())->GetGLTextureId(),
++                              0, 0, 0, 0, GLsizei(rec.width), GLsizei(rec.height), 1, GL_RGBA,
++                              GL_UNSIGNED_BYTE, pixels + rec.offset);
++          ok = glGetError() == GL_NO_ERROR;
++          ChimeraDrainGLErrors();
++        }
++      }
++      if (!ok)
++        lost.push_back(entry);
++    }
++    else if (rec.kind == CHIMERA_PENDING_COPY)
++    {
++      if (rec.offset + rec.bytes > ChimeraPixelBytes() ||
++          !g_texture_cache->ChimeraReseatPending(entry, pixels + rec.offset, size_t(rec.bytes)))
++      {
++        lost.push_back(entry);
++      }
++    }
++  }
++  for (TCacheEntry* entry : lost)
++    g_texture_cache->ChimeraDrop(entry);
++
+   glPixelStorei(GL_UNPACK_ALIGNMENT, unpack_alignment);
+   glPixelStorei(GL_UNPACK_ROW_LENGTH, unpack_row_length);
+   if (unpack_buffer != 0)
+@@ -1014,11 +1195,13 @@
+ extern "C" void chimera_dolphin_gl_state_saving(void)
+ {
+   if (!s_chimera_efb_block || !s_chimera_efb_scratch || !(&chimera_gl_context_id) ||
+-      !g_framebuffer_manager || !g_vertex_manager)
++      !g_framebuffer_manager || !g_vertex_manager || !g_texture_cache ||
++      s_chimera_efb_block_bytes <= CHIMERA_SHADOW_TABLE_BYTES ||
++      s_chimera_efb_scratch_bytes <= CHIMERA_SHADOW_TABLE_BYTES)
+     return;
+   // Another context than the objects': a state taken after a load and before
+   // the next frame. The names here are nobody's, and the copy the load brought
+-  // is still the EFB.
++  // is still the card.
+   const uint64_t live = chimera_gl_context_id();
+   if (live == 0 || live != s_chimera_saved_context)
+     return;
+@@ -1026,51 +1209,109 @@
+   g_vertex_manager->Flush();
+   g_framebuffer_manager->FlushEFBPokes();
+ 
+-  ChimeraEFBHeader* const header = reinterpret_cast<ChimeraEFBHeader*>(s_chimera_efb_block);
++  GLint pack_buffer = 0, pack_alignment = 4, pack_row_length = 0;
++  glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack_buffer);
++  glGetIntegerv(GL_PACK_ALIGNMENT, &pack_alignment);
++  glGetIntegerv(GL_PACK_ROW_LENGTH, &pack_row_length);
++  if (pack_buffer != 0)
++    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
++  glPixelStorei(GL_PACK_ALIGNMENT, 1);
++  glPixelStorei(GL_PACK_ROW_LENGTH, 0);
++  ChimeraDrainGLErrors();
++
++  ChimeraShadowRecord* const fresh = reinterpret_cast<ChimeraShadowRecord*>(s_chimera_efb_scratch);
++  u8* const pixels = ChimeraPixels();
++  u32 count = 0;
++  u64 end = 0;
++  // a texture's pixels, as a record; false when there is no room or no read
++  const auto add_texture = [&](u32 kind, u64 owner, AbstractTexture* texture, GLenum format,
++                               GLenum type) {
++    if (count == CHIMERA_SHADOW_MAX_RECORDS)
++      return false;
++    const u32 width = texture->GetWidth(), height = texture->GetHeight();
++    const u64 bytes = u64(width) * height * 4;
++    if (end + bytes > ChimeraPixelBytes() || size_t(width) * 4 > ChimeraBandBytes())
++      return false;
++    if (!ChimeraReadTexture(static_cast<OGL::OGLTexture*>(texture)->GetGLTextureId(), width,
++                            height, format, type, pixels + end))
++      return false;
++    ChimeraShadowRecord rec = {};
++    rec.owner = owner;
++    rec.offset = end;
++    rec.bytes = bytes;
++    rec.kind = kind;
++    rec.width = width;
++    rec.height = height;
++    rec.flags = texture->GetConfig().flags;
++    fresh[count++] = rec;
++    end += bytes;
++    return true;
++  };
++
++  // The EFB: both textures or neither.
+   AbstractTexture* const color = g_framebuffer_manager->GetEFBColorTexture();
+   AbstractTexture* const depth = g_framebuffer_manager->GetEFBDepthTexture();
+-  ChimeraEFBHeader fresh = {};
+-  bool carried = false;
+   if (color && depth && !color->IsMultisampled() && color->GetLayers() == 1 &&
+       color->GetFormat() == AbstractTextureFormat::RGBA8 &&
+       depth->GetFormat() == AbstractTextureFormat::D32F && color->GetWidth() > 0 &&
+       color->GetHeight() > 0)
+   {
+-    const u32 width = color->GetWidth(), height = color->GetHeight();
+-    const size_t plane = size_t(width) * height * 4;
+-    if (sizeof(ChimeraEFBHeader) + plane * 2 <= s_chimera_efb_block_bytes &&
+-        size_t(width) * 4 <= s_chimera_efb_scratch_bytes)
++    if (!add_texture(CHIMERA_EFB_COLOR, 0, color, GL_RGBA, GL_UNSIGNED_BYTE) ||
++        !add_texture(CHIMERA_EFB_DEPTH, 0, depth, GL_DEPTH_COMPONENT, GL_FLOAT))
+     {
+-      GLint pack_buffer = 0, pack_alignment = 4, pack_row_length = 0;
+-      glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack_buffer);
+-      glGetIntegerv(GL_PACK_ALIGNMENT, &pack_alignment);
+-      glGetIntegerv(GL_PACK_ROW_LENGTH, &pack_row_length);
+-      if (pack_buffer != 0)
+-        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+-      glPixelStorei(GL_PACK_ALIGNMENT, 1);
+-      glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+-      ChimeraDrainGLErrors();
+-      u8* const pixels = s_chimera_efb_block + sizeof(ChimeraEFBHeader);
+-      carried = ChimeraReadEFBTexture(static_cast<OGL::OGLTexture*>(color)->GetGLTextureId(), width,
+-                                      height, GL_RGBA, GL_UNSIGNED_BYTE, pixels) &&
+-                ChimeraReadEFBTexture(static_cast<OGL::OGLTexture*>(depth)->GetGLTextureId(), width,
+-                                      height, GL_DEPTH_COMPONENT, GL_FLOAT, pixels + plane);
+-      glPixelStorei(GL_PACK_ALIGNMENT, pack_alignment);
+-      glPixelStorei(GL_PACK_ROW_LENGTH, pack_row_length);
+-      if (pack_buffer != 0)
+-        glBindBuffer(GL_PIXEL_PACK_BUFFER, GLuint(pack_buffer));
+-      if (carried)
+-      {
+-        fresh.magic = CHIMERA_EFB_MAGIC;
+-        fresh.width = width;
+-        fresh.height = height;
+-      }
++      count = 0;
++      end = 0;
+     }
+   }
+-  if (std::memcmp(header, &fresh, sizeof(fresh)) != 0)
+-    *header = fresh;
+-  if (s_chimera_efb_current != carried)
+-    s_chimera_efb_current = carried;
++
++  // The texture cache's copies of the EFB and the XFB.
++  g_texture_cache->ChimeraForEachCopy([&](TCacheEntry* entry) {
++    if (ChimeraWanted(entry) && ChimeraCarriable(entry->texture.get()))
++      add_texture(CHIMERA_CACHE_COPY, reinterpret_cast<u64>(entry), entry->texture.get(), GL_RGBA,
++                  GL_UNSIGNED_BYTE);
++  });
++
++  // And the copies still waiting to be written to the machine's memory: their
++  // bytes are in a staging texture, which is the card's too.
++  g_texture_cache->ChimeraForEachPendingCopy([&](TCacheEntry* entry) {
++    const u64 row_bytes = u64(entry->pending_efb_copy_width) * 4;
++    const u64 bytes = row_bytes * entry->pending_efb_copy_height;
++    if (count == CHIMERA_SHADOW_MAX_RECORDS || bytes == 0 || bytes > ChimeraBandBytes() ||
++        end + bytes > ChimeraPixelBytes() || entry->pending_efb_copy->GetTexelSize() != 4)
++      return;
++    const MathUtil::Rectangle<int> rect(0, 0, int(entry->pending_efb_copy_width),
++                                        int(entry->pending_efb_copy_height));
++    entry->pending_efb_copy->ReadTexels(rect, ChimeraBand(), u32(row_bytes));
++    if (std::memcmp(pixels + end, ChimeraBand(), size_t(bytes)) != 0)
++      std::memcpy(pixels + end, ChimeraBand(), size_t(bytes));
++    ChimeraShadowRecord rec = {};
++    rec.owner = reinterpret_cast<u64>(entry);
++    rec.offset = end;
++    rec.bytes = bytes;
++    rec.kind = CHIMERA_PENDING_COPY;
++    rec.width = entry->pending_efb_copy_width;
++    rec.height = entry->pending_efb_copy_height;
++    fresh[count++] = rec;
++    end += bytes;
++  });
++
++  glPixelStorei(GL_PACK_ALIGNMENT, pack_alignment);
++  glPixelStorei(GL_PACK_ROW_LENGTH, pack_row_length);
++  if (pack_buffer != 0)
++    glBindBuffer(GL_PIXEL_PACK_BUFFER, GLuint(pack_buffer));
++  ChimeraDrainGLErrors();
++
++  ChimeraShadowHeader header = {};
++  header.magic = CHIMERA_SHADOW_MAGIC;
++  header.count = count;
++  header.end = end;
++  if (std::memcmp(ChimeraHeader(), &header, sizeof(header)) != 0)
++    *ChimeraHeader() = header;
++  if (count != 0 &&
++      std::memcmp(ChimeraRecords(), fresh, count * sizeof(ChimeraShadowRecord)) != 0)
++    std::memcpy(ChimeraRecords(), fresh, count * sizeof(ChimeraShadowRecord));
++  if (!s_chimera_efb_current)
++    s_chimera_efb_current = true;
+ }
+ 
+ extern "C" void chimera_dolphin_gl_frame_start(void)
+@@ -1099,9 +1340,13 @@
+       WARN_LOG_FMT(VIDEO,
+                    "chimera: these GL objects came from another context ({}, now {}); rebuilding",
+                    s_chimera_saved_context, live);
++      // Everything the texture cache holds of the old context goes BEFORE the
++      // rebuild makes anything in the new one: a stale name deleted after that
++      // can be the name a new object was just given.
++      ChimeraLetGoOfTextureCache(efb_usable);
+       gfx->ChimeraRebuildGLObjects();
+       if (efb_usable)
+-        ChimeraRestoreEFB();
++        ChimeraRestoreShadow();
+     }
+   }
+   s_chimera_saved_context = live;
+diff --git a/Source/Core/VideoCommon/TextureCacheBase.cpp b/Source/Core/VideoCommon/TextureCacheBase.cpp
+--- a/Source/Core/VideoCommon/TextureCacheBase.cpp
++++ b/Source/Core/VideoCommon/TextureCacheBase.cpp
+@@ -151,6 +151,114 @@
+   m_readback_texture.reset();
+ }
+ 
++void TextureCacheBase::ChimeraForEachCopy(const std::function<void(TCacheEntry*)>& f)
++{
++  for (auto& [address, entry] : m_textures_by_address)
++  {
++    if (entry->IsCopy() && entry->texture)
++      f(entry.get());
++  }
++}
++
++void TextureCacheBase::ChimeraForEachPendingCopy(const std::function<void(TCacheEntry*)>& f)
++{
++  for (auto& entry : m_pending_efb_copies)
++  {
++    if (entry->pending_efb_copy)
++      f(entry.get());
++  }
++}
++
++void TextureCacheBase::ChimeraLetGo(const std::function<bool(TCacheEntry*)>& keep_texture,
++                                    const std::function<bool(TCacheEntry*)>& keep_pending)
++{
++  TMEM::InvalidateAll();
++  for (auto& bind : m_bound_textures)
++    bind.reset();
++
++  // A copy that was waiting to be written to RAM stays waiting if its bytes
++  // were carried; one whose bytes were not is forgotten, which loses them - as
++  // flushing a dead staging texture did, without writing anything in their
++  // place.
++  for (auto it = m_pending_efb_copies.begin(); it != m_pending_efb_copies.end();)
++  {
++    TCacheEntry* const entry = it->get();
++    entry->pending_efb_copy.reset();
++    entry->chimera_pending_bytes.clear();
++    if (keep_pending && keep_pending(entry))
++      ++it;
++    else
++      it = m_pending_efb_copies.erase(it);
++  }
++
++  m_textures_by_hash.clear();
++  for (auto it = m_textures_by_address.begin(); it != m_textures_by_address.end();)
++  {
++    TCacheEntry* const entry = it->second.get();
++    entry->textures_by_hash_iter = m_textures_by_hash.end();
++    const bool keep = entry->IsCopy() && entry->texture && keep_texture && keep_texture(entry);
++    // dropped here and not left to the destructor, which would hand a texture
++    // of the dead context to the pool for the next allocation to find
++    entry->framebuffer.reset();
++    entry->texture.reset();
++    if (keep)
++    {
++      ++it;
++    }
++    else
++    {
++      entry->invalidated = true;
++      it = m_textures_by_address.erase(it);
++    }
++  }
++
++  m_texture_pool.clear();
++  m_efb_copy_staging_texture_pool.clear();
++  m_readback_texture.reset();
++}
++
++bool TextureCacheBase::ChimeraReseat(TCacheEntry* entry, const TextureConfig& config)
++{
++  std::optional<TexPoolEntry> alloc = AllocateTexture(config);
++  if (!alloc)
++    return false;
++  entry->texture = std::move(alloc->texture);
++  entry->framebuffer = std::move(alloc->framebuffer);
++  return true;
++}
++
++bool TextureCacheBase::ChimeraReseatPending(TCacheEntry* entry, const u8* bytes, size_t size)
++{
++  // a stand-in, so that everything asking "is a copy pending?" gets the answer
++  // it got before the load; FlushEFBCopy writes the bytes and not what it holds
++  entry->pending_efb_copy = GetEFBCopyStagingTexture();
++  if (!entry->pending_efb_copy)
++    return false;
++  entry->chimera_pending_bytes.assign(bytes, bytes + size);
++  return true;
++}
++
++void TextureCacheBase::ChimeraDrop(TCacheEntry* entry)
++{
++  for (auto it = m_pending_efb_copies.begin(); it != m_pending_efb_copies.end();)
++  {
++    if (it->get() == entry && !entry->pending_efb_copy)
++      it = m_pending_efb_copies.erase(it);
++    else
++      ++it;
++  }
++  auto [it, end] = m_textures_by_address.equal_range(entry->addr);
++  for (; it != end; ++it)
++  {
++    if (it->second.get() == entry)
++    {
++      entry->invalidated = true;
++      m_textures_by_address.erase(it);
++      return;
++    }
++  }
++}
++
+ void TextureCacheBase::OnConfigChanged(const VideoConfig& config)
+ {
+   if (config.bHiresTextures != m_backup_config.hires_textures ||
+@@ -2602,8 +2710,31 @@
+   auto& system = Core::System::GetInstance();
+   auto& memory = system.GetMemory();
+   u8* const dst = memory.GetPointerForRange(entry->addr, covered_range);
+-  WriteEFBCopyToRAM(dst, entry->pending_efb_copy_width, entry->pending_efb_copy_height,
+-                    entry->memory_stride, std::move(entry->pending_efb_copy));
++  if (!entry->chimera_pending_bytes.empty())
++  {
++    // chimera: the staging texture is a stand-in (ChimeraReseatPending); the
++    // copy's bytes came through a state load in here, a row after a row as
++    // ReadTexels would have handed them over.
++    const size_t row_bytes = size_t(entry->pending_efb_copy_width) * 4;
++    const size_t rows = std::min<size_t>(entry->pending_efb_copy_height,
++                                         entry->chimera_pending_bytes.size() / std::max<size_t>(row_bytes, 1));
++    if (dst && row_bytes != 0)
++    {
++      for (size_t y = 0; y < rows; y++)
++      {
++        std::memcpy(dst + y * entry->memory_stride,
++                    entry->chimera_pending_bytes.data() + y * row_bytes, row_bytes);
++      }
++    }
++    entry->chimera_pending_bytes.clear();
++    entry->chimera_pending_bytes.shrink_to_fit();
++    ReleaseEFBCopyStagingTexture(std::move(entry->pending_efb_copy));
++  }
++  else
++  {
++    WriteEFBCopyToRAM(dst, entry->pending_efb_copy_width, entry->pending_efb_copy_height,
++                      entry->memory_stride, std::move(entry->pending_efb_copy));
++  }
+ 
+   // If the EFB copy was invalidated (e.g. the bloom case mentioned in InvalidateTexture), we don't
+   // need to do anything more. The entry will be automatically deleted by smart pointers
+diff --git a/Source/Core/VideoCommon/TextureCacheBase.h b/Source/Core/VideoCommon/TextureCacheBase.h
+--- a/Source/Core/VideoCommon/TextureCacheBase.h
++++ b/Source/Core/VideoCommon/TextureCacheBase.h
+@@ -14,6 +14,7 @@
+ #include <tuple>
+ #include <unordered_map>
+ #include <unordered_set>
++#include <functional>
+ #include <vector>
+ 
+ #include "Common/BitSet.h"
+@@ -166,6 +167,10 @@
+   std::unique_ptr<AbstractStagingTexture> pending_efb_copy;
+   u32 pending_efb_copy_width = 0;
+   u32 pending_efb_copy_height = 0;
++  // chimera: the bytes of a pending copy whose staging texture went with the GL
++  // context a state load replaced. The staging texture above is then a stand-in
++  // that holds nothing, and FlushEFBCopy writes these instead (issue 190).
++  std::vector<u8> chimera_pending_bytes;
+ 
+   std::string texture_info_name = "";
+ 
+@@ -285,6 +290,26 @@
+   // framebuffer manager.)
+   void ChimeraDropStagingTextures();
+ 
++  // chimera (issue 190): what this cache holds that is on the card and in no
++  // savestate - the copies of the EFB and the XFB, and the copies still waiting
++  // to be written to RAM - for VideoBackends/OGL/OGLGfx.cpp, which carries them
++  // across a state load.
++  //
++  // ForEachCopy / ForEachPendingCopy name them. LetGo is Invalidate() for a GL
++  // context that is gone: nothing is flushed (a pending copy's staging texture
++  // is the dead context's, and flushing it wrote whatever came back into the
++  // machine's memory), every GL object is dropped NOW rather than into the
++  // pool, and the entries the two answers accept stay in the cache without a
++  // texture until Reseat / ReseatPending give them one. Drop removes an entry
++  // that could not be given one.
++  void ChimeraForEachCopy(const std::function<void(TCacheEntry*)>& f);
++  void ChimeraForEachPendingCopy(const std::function<void(TCacheEntry*)>& f);
++  void ChimeraLetGo(const std::function<bool(TCacheEntry*)>& keep_texture,
++                    const std::function<bool(TCacheEntry*)>& keep_pending);
++  bool ChimeraReseat(TCacheEntry* entry, const TextureConfig& config);
++  bool ChimeraReseatPending(TCacheEntry* entry, const u8* bytes, size_t size);
++  void ChimeraDrop(TCacheEntry* entry);
++
+   void ReleaseToPool(TCacheEntry* entry);
+ 
+   TCacheEntry* Load(u32 stage);
