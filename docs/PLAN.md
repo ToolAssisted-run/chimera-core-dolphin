@@ -541,3 +541,101 @@ memory as before.
 **The gate:** `gl:picture-after-load` runs at 2x as well, where the picture
 is one of these copies: six frames exact, and the first two wrong with the
 core left untold.
+
+## The Vulkan renderer (user-decided, 2026-10-11, chimera#248)
+
+The owner decided that every core whose emulator has a Vulkan renderer offers
+it. Here that is a third value of the Renderer setting, `vulkan-hw`: Dolphin's
+Vulkan backend, drawing on the computer's graphics card through Chimera's
+Vulkan bridge. The default did not change. It has nothing to fall back on: on
+a computer that hands no Vulkan over, Init refuses and says why. The
+enhancement settings (internal resolution, anti-aliasing, filtering, the
+widescreen hack, texture cache accuracy, GPU texture decoding) are shown for
+it as for `opengl-hw`.
+
+The renderer is part of the machine here, as it is with `opengl-hw`: a game
+copies parts of its picture into its own memory, and two renderers do not
+round every pixel alike. A movie made with one of the two may not play back
+with the other.
+
+What it took (patch 0029, 20 files of Dolphin, and the adapter):
+
+- **The build.** `-DENABLE_VULKAN=ON` for both flavours. The shader compiler
+  (glslang), the Vulkan headers and the memory allocator are Dolphin's own
+  Externals. The guest toolchain gained `-DCHIMERA_GUEST_VK`, which every
+  change below is under, and `-DZDICT_QSORT=0` (see docs/BUILDING.md).
+- **The functions.** Upstream opens the Vulkan library. The bridge's guest
+  half is linked into the core instead, and `VulkanLoader.cpp` asks it for
+  each command by name. Every command Dolphin requires is on the bridge's
+  list; the ones it lacks are for windows and debugging.
+- **No window.** Nothing to do: upstream's backend has a headless mode, and
+  the picture already reaches the core through Dolphin's own readback
+  (patches 0021 and 0023).
+- **Memory.** Through the bridge every mapped byte is a byte of the core's
+  memory, copied when the mapping is made, and no memory type is coherent.
+  Upstream flushes and invalidates already. Mapped buffers ask for cached
+  memory, not write-combined; the stream buffers are 24, 2, 8 and 8 MiB and
+  the upload buffer 8 MiB (upstream: 48, 8, 64, 16 and 32); the allocator's
+  blocks are 16 MiB. No pipeline cache file is kept: its bytes are the
+  driver's, and it is written when the backend lets go of a device that after
+  a load is no longer there.
+- **A load.** A load is a new Vulkan device. `VKGfx::ChimeraRebuild` lets go
+  of everything made on the old one and makes it again, as the OpenGL
+  backend does for a context that moved (patch 0020), and the order is in
+  its comment: while the old objects go, no command crosses the bridge
+  (`vk-shim.cpp`), and the shared video code's objects go before the command
+  buffer manager that destroys them. What the machine knows is kept - the
+  texture cache's entries for copies, the vertex loaders, the shader UIDs.
+- **What is only on the card.** The frame being drawn and the texture
+  cache's copies are copied into the core's memory before a state and given
+  back after a load, in the same table and the same two blocks as for
+  OpenGL (patches 0027 and 0028). Read through Dolphin's staging textures
+  where the OpenGL backend asks the driver. The EFB's depth is read as the
+  colour `ResolveEFBDepthTexture` makes of it and given back by drawing, the
+  way upstream's own savestates do it (`DoLoadState`), because a Vulkan depth
+  texture is neither read nor loaded directly.
+- **Deferred destruction, upstream's.** `CommandBufferManager` destroys what
+  it was handed "later": when a command buffer is waited for, the lists of
+  every OTHER buffer are run. When the buffer waited for is the current one
+  - a submit that waits, which every readback's flush is - its own list is
+  passed over and then counted as done. With a window something else is
+  always waited for sooner or later. Without one, a field that only fetches
+  its picture submits once and waits, and nothing was ever destroyed. Each
+  kept buffer is mapped, so each was the core's memory: Pro Rally 2002 at 2x
+  used up all 2560 MiB of it during its first frame (a disc boots through
+  about 300 fields before the first pause), and the picture then came back
+  at 1x without a word. The Chimera build runs the waited buffer's own list.
+
+The core's own sandbox runner (`run-wbx`) now tells the core before each
+state and after each load (`StateSaving`, `StateLoaded`), as the frontend
+does, hands over the Vulkan bridge, and can write a screenshot.
+
+Measured on Mesa's lavapipe (2026-10-12), swiss:
+
+- No pixel of frame 120 differs from OpenGL's by more than 8 levels of 255.
+- A state saved and loaded around each of 120 frames is the straight run -
+  memory, picture and sound - with no command refused, at 1x and at 2x. With
+  the core left untold before each state, 119 of the 120 frames differ.
+- Six frames drawn right after a load, through chimera-run, are bit for bit
+  the frames first drawn, at 1x and at 2x.
+
+Measured on a GeForce GTX 1060 (Windows, driver 581.42, Vulkan 1.4.312)
+through chimera-run.exe, Pro Rally 2002 with no input, from power-on:
+
+- 7900 frames (the demo race): 169.6 s with Vulkan, 161.3 s with OpenGL. At
+  2x: 301.0 s against 280.8 s. Of the picture at frame 7899, 22 of 286,720
+  pixels differ from OpenGL's by more than 8 levels at 1x, and 60 of
+  1,146,880 at 2x. The machine's memory differs between the two renderers,
+  as said above.
+- Twelve frames drawn after a load, compared with the frames first drawn:
+  all twelve exact in the film at frame 3600 and in the race at frame 7800,
+  at 1x and at 2x. With the core left untold, two of the twelve are not
+  exact in the film, three in the race, and two in the race at 2x.
+- Eight times back from frame 7900 to 7650 and forward again: the last
+  picture, System RAM and ARAM are the straight run's, byte for byte. It
+  took 231.2 s against 207.2 s with OpenGL.
+
+Not measured: a game played with input, a Wii or Triforce game, anti-aliasing
+(a multisampled EFB is not carried across a load, as with OpenGL), anything
+above 2x, and any card other than this one. The `vk:` checks in the test
+script run on lavapipe, which is not a graphics card.

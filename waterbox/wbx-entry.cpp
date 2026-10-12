@@ -23,6 +23,7 @@ static char g_loadError[512];
 
 #ifdef CHIMERA_GL_BRIDGE
 extern "C" void chimera_dolphin_install_gpu_bridge(uint64_t addr);
+extern "C" void chimera_dolphin_install_vulkan_bridge(uint64_t addr);
 #endif
 
 extern "C" {
@@ -128,6 +129,11 @@ ECL_EXPORT int Init(void)
   char renderer[32] = "software";
   wbx_setting_str("renderer", renderer, sizeof renderer);
   chimera_dolphin_set_renderer(renderer);
+  if (const char* refusal = chimera_dolphin_renderer_refusal())
+  {
+    snprintf(g_loadError, sizeof g_loadError, "%s", refusal);
+    return 0;
+  }
   for (int i = 0; i < 4; i++)
   {
     char key[8], val[24];
@@ -214,6 +220,13 @@ ECL_EXPORT void SetAxis(int32_t index, int32_t value)
 ECL_EXPORT void SetGpuBridge(uint64_t addr)
 {
   chimera_dolphin_install_gpu_bridge(addr);
+}
+
+// The Vulkan bridge, handed over beside the OpenGL one; the Renderer setting
+// decides which is used ("vulkan-hw").
+ECL_EXPORT void SetVulkanBridge(uint64_t addr)
+{
+  chimera_dolphin_install_vulkan_bridge(addr);
 }
 #endif
 

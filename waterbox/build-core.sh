@@ -43,6 +43,12 @@ python3 "$mb/source/gl/gen-gl-bridge.py" "$here/glad/include/glad/gl.h" \
 	"$mb/source/gl/gl-entry-points.txt" "$here/generated-gl" \
 	--only "$here/gl-entry-points.txt"
 
+# the guest half of the Vulkan bridge, generated from miniBox's list of the
+# commands the frontend carries (the same list its host half is generated from)
+mkdir -p "$here/generated-vk"
+python3 "$mb/source/vk/gen-vk-bridge.py" "$mb/extern/vulkan-headers/registry/vk.xml" \
+	"$mb/source/vk/vk-entry-points.txt" "$here/generated-vk"
+
 make -f "$here/guest.mk" -C "$here" -j"$jobs" MB="$mb"
 
 mkdir -p "$out"
@@ -58,6 +64,7 @@ g++ -specs "$sr/lib/musl-gcc.specs" -mcmodel=large -fno-pic -fno-pie \
 	"$here"/obj-guest/host-stubs.o "$here"/obj-guest/guest-syscalls.o \
 	"$here"/obj-guest/gl-shim.o "$here"/obj-guest/gl-bridge-guest.o "$here"/obj-guest/glad-gl.o \
 	"$here"/obj-guest/ram-nand.o "$here"/obj-guest/zip-reader.o \
+	"$here"/obj-guest/vk-shim.o "$here"/obj-guest/vk-guest.o "$here"/obj-guest/vk-bridge-guest.o \
 	"$mbuild/source/guest/cxxglue.c.o" "$mbuild/source/guest/emulibc.c.o" \
 	-Wl,--start-group $libs -Wl,--end-group \
 	-L"$sr/lib" -lstdc++ -lgcc -lgcc_eh -lc
@@ -67,8 +74,10 @@ echo "built $out/core.wbx"
 # host driver for the gate
 mblinux="$mb/build/meson-linux"
 [ -f "$mblinux/source/host/libminiboxhost.so" ] || mblinux="$mbuild"
-gcc -O2 -Wall -DCHIMERA_GL_BRIDGE -I"$mb/source/host" -I"$mb/source/gl" \
+gcc -O2 -Wall -DCHIMERA_GL_BRIDGE -DCHIMERA_VK_BRIDGE -I"$mb/source/host" -I"$mb/source/gl" \
 	-I"$here/glad/include" -I"$here/generated-gl" \
+	-I"$mb/source/vk" -I"$mb/extern/vulkan-headers/include" -I"$here/generated-vk" \
 	-o "$out/run-wbx" "$here/run-wbx.c" "$here/gl-host.c" "$here/glad/src/gl.c" \
-	"$mblinux/source/host/libminiboxhost.so" -Wl,-rpath,"$mblinux/source/host" -lEGL
+	"$mb/source/vk/vk-host.c" \
+	"$mblinux/source/host/libminiboxhost.so" -Wl,-rpath,"$mblinux/source/host" -lEGL -ldl
 echo "built $out/run-wbx"

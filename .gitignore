@@ -9,3 +9,4 @@ waterbox/work/
 build-*.log
 waterbox/bin/
 generated-gl/
+generated-vk/

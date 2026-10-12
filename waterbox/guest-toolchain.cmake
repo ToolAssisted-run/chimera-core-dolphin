@@ -20,9 +20,13 @@ if(NOT EXISTS "${SR}/lib/musl-gcc.specs")
   message(FATAL_ERROR "miniBox guest sysroot not found at ${SR}: build it (meson setup <miniBox>/build/meson-cpp <miniBox> -Dguest_cpp=true && ninja -C <miniBox>/build/meson-cpp) or set MINIBOX_DIR")
 endif()
 
+# -DZDICT_QSORT=0: zstd's dictionary builder (never run here) sorts with
+# qsort_r on Linux, which the guest's C library does not have. GCC 13 lets the
+# undeclared call through with a warning and GCC 14 does not; 0 is zstd's own
+# name for "plain qsort".
 execute_process(COMMAND gcc -dumpfullversion OUTPUT_VARIABLE GCCVER OUTPUT_STRIP_TRAILING_WHITESPACE)
 
-set(WB "-specs=${SR}/lib/musl-gcc.specs -fvisibility=hidden -mcmodel=large -mstack-protector-guard=global -fno-stack-protector -fno-pic -fno-pie -fcf-protection=none -DCHIMERA_NO_TLS -DSTBI_NO_THREAD_LOCALS -DZ_TLS=")
+set(WB "-specs=${SR}/lib/musl-gcc.specs -fvisibility=hidden -mcmodel=large -mstack-protector-guard=global -fno-stack-protector -fno-pic -fno-pie -fcf-protection=none -DCHIMERA_NO_TLS -DCHIMERA_GUEST_VK -DSTBI_NO_THREAD_LOCALS -DZ_TLS= -DZDICT_QSORT=0")
 set(CMAKE_C_FLAGS_INIT "${WB}")
 set(CMAKE_CXX_FLAGS_INIT "${WB} -nostdinc++ -I${SR}/include/c++/${GCCVER} -I${SR}/include/c++/${GCCVER}/x86_64-linux-musl")
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-static -nostdlib++")

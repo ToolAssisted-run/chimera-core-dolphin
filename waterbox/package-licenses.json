@@ -153,6 +153,27 @@
       "file": "extern/dolphin/Externals/picojson/LICENSE"
     },
     {
+      "name": "glslang",
+      "license": "BSD-3-Clause, BSD-2-Clause, MIT and Apache-2.0, with its generated parser under GPL-3.0 with the Bison exception",
+      "url": "https://github.com/KhronosGroup/glslang",
+      "file": "extern/dolphin/Externals/glslang/glslang/LICENSE.txt",
+      "note": "The compiler that turns the shaders Dolphin writes into SPIR-V, for its Vulkan renderer."
+    },
+    {
+      "name": "Vulkan Memory Allocator",
+      "license": "MIT",
+      "url": "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator",
+      "file": "extern/dolphin/Externals/VulkanMemoryAllocator/LICENSE.txt",
+      "note": "Used only when the Renderer setting is vulkan-hw."
+    },
+    {
+      "name": "Vulkan-Headers",
+      "license": "Apache-2.0 or MIT",
+      "url": "https://github.com/KhronosGroup/Vulkan-Headers",
+      "file": "extern/dolphin/Externals/Vulkan-Headers/LICENSE.md",
+      "note": "The Khronos headers the Vulkan renderer is compiled against."
+    },
+    {
       "name": "Swiss (gate test content only, not linked)",
       "license": "GPL-2.0",
       "url": "https://github.com/emukidid/swiss-gc",

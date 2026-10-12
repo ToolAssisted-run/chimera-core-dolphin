@@ -49,6 +49,7 @@ void chimera_dolphin_set_cpu_core(const char* name);
 void chimera_dolphin_set_port(int port, int present);
 int chimera_dolphin_port_present(int port);
 void chimera_dolphin_set_renderer(const char* name);
+const char* chimera_dolphin_renderer_refusal(void);
 int chimera_dolphin_savedata_count(void);
 int chimera_dolphin_domain_count(void);
 uint8_t* chimera_dolphin_domain_ptr(int i);

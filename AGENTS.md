@@ -10,13 +10,14 @@ also built natively as a reference, and the gate holds the two byte-identical.
 ## Layout
 
 - `extern/dolphin` - upstream Dolphin, a pinned submodule with its own submodules. Never edited in place.
-- `patches/` - 24 numbered patches applied to `extern/dolphin`.
+- `patches/` - 29 numbered patches applied to `extern/dolphin`.
 - `waterbox/configure-flags.sh` - the one CMake option set both flavors use (`DOLPHIN_OPTS`); sourced, not run. `guest-toolchain.cmake` - the miniBox guest as a CMake toolchain.
 - `waterbox/build-native.sh`, `native.mk` - the native reference: `build/native`, then `waterbox/obj-native/run-native`.
 - `waterbox/build-guest.sh`, `guest.mk`, `build-core.sh` - the guest: `build/guest`, then `waterbox/bin/core.wbx` and `waterbox/bin/run-wbx`. `build-package.sh` runs them and writes the package.
 - `waterbox/dolphin-driver.cpp`, `dolphin-driver.h` - the adapter both flavors share.
 - `waterbox/wbx-entry.cpp` - the guest ABI (guest only); `run-native.cpp` is its native twin; `run-wbx.c` drives `core.wbx` from the host.
 - `waterbox/gl-shim.cpp`, `gl-host.c`, `gl-entry-points.txt`, `glad/` - the GPU bridge: guest end, host end, the entry points, the vendored loader.
+- `waterbox/vk-shim.cpp` - the guest end of Chimera's Vulkan bridge, for the `vulkan-hw` renderer. Its two halves are miniBox's (`source/vk`), generated into `waterbox/generated-vk/` at build time.
 - `waterbox/ram-nand.cpp`, `guest-syscalls.cpp`, `host-stubs.cpp`, `zip-reader.*` - the Wii NAND in guest memory, and what a sandbox answers differently.
 - `waterbox/waterbox.config`, `file_slots.json`, `default_keybinds.json`, `package-licenses.json` - what the package declares to Chimera.
 - `waterbox/run-gate.sh`, `waterbox/tests/run-frontend.sh` - the core gate and the frontend gate.
@@ -34,7 +35,7 @@ chimera="$HOME/chimera"                        # a Chimera checkout
 mb="$chimera/extern/chimera-common-minibox"    # miniBox, a submodule of it
 
 sudo apt-get update
-sudo apt-get install -y --no-install-recommends meson ninja-build build-essential cmake python3 pkg-config libegl-dev libegl1 libgl1-mesa-dri libegl-mesa0
+sudo apt-get install -y --no-install-recommends meson ninja-build build-essential cmake python3 pkg-config libegl-dev libegl1 libgl1-mesa-dri libegl-mesa0 libvulkan1 mesa-vulkan-drivers
 
 git submodule update --init --recursive
 
@@ -123,9 +124,9 @@ Linux and on Windows.
 - **Determinism is the product.** The guest must not read host time, host
   randomness or anything else that differs between runs, and a savestate
   must round-trip. The gate checks both; a change that breaks either is a
-  bug. The `opengl-hw` renderer is the declared exception
-  (`waterbox.config`): the host's GPU draws, and a movie recorded on it
-  replays only on the same driver.
+  bug. The `opengl-hw` and `vulkan-hw` renderers are the declared exception
+  (`waterbox.config`): the host's GPU draws, and a movie recorded on one of
+  them replays only on the same renderer and driver.
 - **Run the gate before committing.** A new check needs a negative control:
   show that it fails when the thing it checks is broken.
 - **Never commit game files, BIOS or firmware.** Discs and rom sets go in

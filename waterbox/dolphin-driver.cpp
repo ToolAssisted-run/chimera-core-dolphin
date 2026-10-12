@@ -98,6 +98,15 @@ static bool s_renderer_opengl;
 // while a project asked for the software renderer, and the GL hooks below must
 // not run then (g_gfx is an SWGfx and the OGL helper casts it unchecked).
 static bool s_gl_backend;
+// The Renderer setting's "vulkan-hw", and whether Init chose Dolphin's Vulkan
+// backend for it (chimera issue 248). Never both this and s_gl_backend.
+static bool s_renderer_vulkan;
+static bool s_vk_backend;
+// either of the two: the picture is drawn on a graphics card
+static bool OnACard()
+{
+  return s_gl_backend || s_vk_backend;
+}
 static bool s_port_present[4] = {true, false, false, false};
 // The emulation options a project may pin (chimera#149), as the project gave
 // them; kUnset = not given, dolphin's own default stands. Every declared
@@ -118,6 +127,11 @@ struct Options
 };
 static Options s_opt;
 extern "C" int chimera_dolphin_gpu_bridge_present(void) __attribute__((weak));
+// the guest end of the Vulkan bridge (vk-shim.cpp); the native reference has none
+extern "C" int chimera_dolphin_vulkan_bridge_present(void) __attribute__((weak));
+extern "C" uint64_t chimera_dolphin_vulkan_context(void) __attribute__((weak));
+extern "C" void chimera_dolphin_vulkan_quiet(void) __attribute__((weak));
+extern "C" void chimera_dolphin_vulkan_old_device_gone(void) __attribute__((weak));
 
 static constexpr uint16_t kWireBit[12] = {
     PAD_BUTTON_A,    PAD_BUTTON_B,    PAD_BUTTON_X,    PAD_BUTTON_Y,
@@ -137,7 +151,7 @@ static std::vector<uint32_t> s_video_hi;
 static bool s_video_is_hi;
 static bool CrispPicture()
 {
-  return s_gl_backend && s_opt.internal_resolution != kUnset && s_opt.internal_resolution > 1;
+  return OnACard() && s_opt.internal_resolution != kUnset && s_opt.internal_resolution > 1;
 }
 static int s_video_w = 640, s_video_h = 480;
 
@@ -252,7 +266,7 @@ extern "C" void Chimera_OutputField(int /*field*/, uint32_t xfb_addr, uint32_t f
             fb_height);
     logged++;
   }
-  if (s_gl_backend && s_opt.widescreen_hack == 1)
+  if (OnACard() && s_opt.widescreen_hack == 1)
     WidenTheView();
   if (!xfb_addr || !fb_width || !fb_height)
     return;
@@ -339,11 +353,15 @@ public:
     const bool gl = s_renderer_opengl && chimera_dolphin_gpu_bridge_present &&
                     chimera_dolphin_gpu_bridge_present();
     s_gl_backend = gl;
+    const bool vk = s_renderer_vulkan && chimera_dolphin_vulkan_bridge_present &&
+                    chimera_dolphin_vulkan_bridge_present();
+    s_vk_backend = vk;
     // patch 0021 presents the XFB decoded from the machine's memory; above 1x
     // the crisp copy in VRAM is the picture wanted (chimera#149)
     g_Config.bChimeraXfbFromRamOnly = !CrispPicture();
-    layer->Set(Config::MAIN_GFX_BACKEND, std::string(gl ? "OGL" : "Software Renderer"));
-    if (gl)
+    layer->Set(Config::MAIN_GFX_BACKEND,
+               std::string(gl ? "OGL" : vk ? "Vulkan" : "Software Renderer"));
+    if (gl || vk)
     {
       // the machine's video memory stays machine state: EFB and XFB copies
       // land in RAM (GPU readbacks), which is what the gate hashes and what
@@ -353,6 +371,8 @@ public:
       // one real context: no worker-thread compilers, no disk shader cache
       layer->Set(Config::GFX_SHADER_COMPILATION_MODE, ShaderCompilationMode::Synchronous);
       layer->Set(Config::GFX_SHADER_CACHE, false);
+      // (Vulkan) commands are submitted where they are recorded, not on a thread of their own
+      layer->Set(Config::GFX_BACKEND_MULTITHREADING, false);
     }
     if (s_opt.mmu != kUnset)
       layer->Set(Config::MAIN_MMU, s_opt.mmu != 0);
@@ -792,10 +812,13 @@ extern "C" void chimera_dolphin_gl_state_loaded(void);
  * BEFORE anyone looked is the one that was believed and should not have been
  * (chimera issue 126; see OGLGfx.cpp). Set after the load, so the load cannot
  * wipe it. */
+extern "C" void chimera_dolphin_vk_state_loaded(void) __attribute__((weak));
 void chimera_dolphin_state_loaded(void)
 {
   if (s_gl_backend)
     chimera_dolphin_gl_state_loaded();
+  else if (s_vk_backend && chimera_dolphin_vk_state_loaded)
+    chimera_dolphin_vk_state_loaded();
 }
 
 extern "C" void chimera_dolphin_gl_state_saving(void);
@@ -808,10 +831,15 @@ extern "C" void chimera_dolphin_gl_efb_blocks(void* block, size_t block_bytes, v
  * here, with whatever geometry was still queued drawn first, and the rebuild
  * after a load puts it back (patch 0027, chimera issue 190). The software
  * renderer's EFB is memory already. */
+extern "C" void chimera_dolphin_vk_state_saving(void) __attribute__((weak));
+extern "C" void chimera_dolphin_vk_efb_blocks(void* block, size_t block_bytes, void* scratch,
+                                              size_t scratch_bytes) __attribute__((weak));
 void chimera_dolphin_state_saving(void)
 {
   if (s_gl_backend)
     chimera_dolphin_gl_state_saving();
+  else if (s_vk_backend && chimera_dolphin_vk_state_saving)
+    chimera_dolphin_vk_state_saving();
 }
 
 /* Where that copy goes, handed over during Init - before any state exists, so
@@ -820,8 +848,12 @@ void chimera_dolphin_efb_blocks(void* block, size_t block_bytes, void* scratch,
                                 size_t scratch_bytes)
 {
   chimera_dolphin_gl_efb_blocks(block, block_bytes, scratch, scratch_bytes);
+  // the Vulkan backend keeps the same table in the same blocks; one of the two runs
+  if (chimera_dolphin_vk_efb_blocks)
+    chimera_dolphin_vk_efb_blocks(block, block_bytes, scratch, scratch_bytes);
 }
 
+extern "C" void chimera_dolphin_vk_frame_start(void) __attribute__((weak));
 void chimera_dolphin_frame(void)
 {
   // chimera: before the machine steps, give the OGL backend the chance to
@@ -832,6 +864,8 @@ void chimera_dolphin_frame(void)
   // helper's cast would be a lie.
   if (s_gl_backend)
     chimera_dolphin_gl_frame_start();
+  else if (s_vk_backend && chimera_dolphin_vk_frame_start)
+    chimera_dolphin_vk_frame_start();
   // DoFrameStep stores Running before it returns and the machine stores
   // Paused at the end of the next VI field, so waiting for Paused after the
   // call cannot race the step.
@@ -1133,6 +1167,19 @@ void chimera_dolphin_set_renderer(const char* name)
   // "opengl-hw" is the package's declared value (-hw = draws on a real GPU,
   // the convention every core shares); plain "opengl" stays as the harness alias
   s_renderer_opengl = name && (strcmp(name, "opengl-hw") == 0 || strcmp(name, "opengl") == 0);
+  s_renderer_vulkan = name && strcmp(name, "vulkan-hw") == 0;
+}
+
+// Why this machine cannot start with the renderer that was asked for, or null.
+// "opengl-hw" without a card falls back to the software renderer and always
+// has; "vulkan-hw" has nothing to fall back on that the project agreed to.
+const char* chimera_dolphin_renderer_refusal(void)
+{
+  if (s_renderer_vulkan &&
+      !(chimera_dolphin_vulkan_bridge_present && chimera_dolphin_vulkan_bridge_present()))
+    return "the renderer setting is vulkan-hw, and no Vulkan was handed over (this computer may "
+           "have no Vulkan driver, or this Chimera is older than its Vulkan bridge).";
+  return nullptr;
 }
 
 void chimera_dolphin_set_cpu_core(const char* name)

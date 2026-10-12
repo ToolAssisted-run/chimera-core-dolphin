@@ -1,0 +1,1107 @@
+diff --git a/Source/Core/VideoBackends/Vulkan/CommandBufferManager.cpp b/Source/Core/VideoBackends/Vulkan/CommandBufferManager.cpp
+--- a/Source/Core/VideoBackends/Vulkan/CommandBufferManager.cpp
++++ b/Source/Core/VideoBackends/Vulkan/CommandBufferManager.cpp
+@@ -305,6 +305,25 @@
+     cleanup_index = (cleanup_index + 1) % NUM_COMMAND_BUFFERS;
+   }
+ 
++#ifdef CHIMERA_GUEST_VK
++  // chimera: the loop above walks every command buffer but the current one.
++  // When it is the current one that was waited for - a submit that waits, as
++  // every readback's flush is - its own list is passed over, and the counter
++  // set below then says it was dealt with: what it was to destroy stays until
++  // some later buffer is waited for instead. Without a window that can be
++  // never (nothing is presented, and a field that only fetches its picture
++  // submits once and waits), so every buffer and texture let go of stayed -
++  // and through Chimera's bridge a mapped buffer that stays is the core's own
++  // memory: Pro Rally 2002 at 2x ran out of it during its first frame. The
++  // card has finished with this buffer, so its list is run here.
++  if (index == m_current_cmd_buffer && resources.fence_counter > m_completed_fence_counter)
++  {
++    for (auto& it : resources.cleanup_resources)
++      it();
++    resources.cleanup_resources.clear();
++  }
++#endif
++
+   m_completed_fence_counter = now_completed_counter;
+ }
+ 
+diff --git a/Source/Core/VideoBackends/Vulkan/Constants.h b/Source/Core/VideoBackends/Vulkan/Constants.h
+--- a/Source/Core/VideoBackends/Vulkan/Constants.h
++++ b/Source/Core/VideoBackends/Vulkan/Constants.h
+@@ -85,7 +85,13 @@
+ constexpr u32 NUM_COMPUTE_TEXEL_BUFFERS = 2;
+ 
+ // Textures that don't fit into this buffer will be uploaded with a separate buffer (see below).
++#ifdef CHIMERA_GUEST_VK
++// chimera: mapped, so it is in the core's memory (see VKVertexManager.cpp). A
++// texture that does not fit takes a buffer of its own for the upload.
++constexpr u32 TEXTURE_UPLOAD_BUFFER_SIZE = 8 * 1024 * 1024;
++#else
+ constexpr u32 TEXTURE_UPLOAD_BUFFER_SIZE = 32 * 1024 * 1024;
++#endif
+ 
+ // Textures greater than 1024*1024 will be put in staging textures that are released after
+ // execution instead. A 2048x2048 texture is 16MB, and we'd only fit four of these in our
+diff --git a/Source/Core/VideoBackends/Vulkan/ObjectCache.cpp b/Source/Core/VideoBackends/Vulkan/ObjectCache.cpp
+--- a/Source/Core/VideoBackends/Vulkan/ObjectCache.cpp
++++ b/Source/Core/VideoBackends/Vulkan/ObjectCache.cpp
+@@ -52,11 +52,21 @@
+     return false;
+   }
+ 
++#ifdef CHIMERA_GUEST_VK
++  // chimera: no file for the driver's pipeline cache. What a driver writes
++  // there is that computer's, and a file of the machine is part of every
++  // savestate; and it is asked for when the backend lets go of its device,
++  // which after a savestate is loaded is a device no longer there to answer.
++  if (false)
++  {
++  }
++#else
+   if (g_ActiveConfig.bShaderCache)
+   {
+     if (!LoadPipelineCache())
+       return false;
+   }
++#endif
+   else
+   {
+     if (!CreatePipelineCache())
+@@ -68,8 +78,10 @@
+ 
+ void ObjectCache::Shutdown()
+ {
++#ifndef CHIMERA_GUEST_VK
+   if (g_ActiveConfig.bShaderCache && m_pipeline_cache != VK_NULL_HANDLE)
+     SavePipelineCache();
++#endif
+ }
+ 
+ void ObjectCache::ClearSamplerCache()
+diff --git a/Source/Core/VideoBackends/Vulkan/StagingBuffer.cpp b/Source/Core/VideoBackends/Vulkan/StagingBuffer.cpp
+--- a/Source/Core/VideoBackends/Vulkan/StagingBuffer.cpp
++++ b/Source/Core/VideoBackends/Vulkan/StagingBuffer.cpp
+@@ -146,6 +146,19 @@
+   alloc_create_info.preferredFlags = 0;
+   alloc_create_info.requiredFlags = 0;
+ 
++#ifdef CHIMERA_GUEST_VK
++  // chimera: through Chimera's Vulkan bridge a mapping is a copy in the core's
++  // memory, filled from the card's when it is made and at every invalidate.
++  // Write-combined memory is slow to read from, on the host as anywhere, so
++  // cached memory is asked for whichever way the buffer is used. No memory
++  // type is coherent there; this file flushes and invalidates already.
++  if (true)
++  {
++    alloc_create_info.flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
++    alloc_create_info.preferredFlags = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
++  }
++  else
++#endif
+   if (DriverDetails::HasBug(DriverDetails::BUG_SLOW_CACHED_READBACK_MEMORY)) [[unlikely]]
+   {
+     // If there is no memory type that is both CACHED and COHERENT,
+@@ -167,6 +180,7 @@
+   VkResult res = vmaCreateBuffer(g_vulkan_context->GetMemoryAllocator(), &buffer_create_info,
+                                  &alloc_create_info, out_buffer, out_alloc, &alloc_info);
+ 
++#ifndef CHIMERA_GUEST_VK
+   if (type == STAGING_BUFFER_TYPE_UPLOAD)
+   {
+     VkMemoryPropertyFlags flags = 0;
+@@ -178,6 +192,7 @@
+                           "affect performance.");
+     }
+   }
++#endif
+ 
+   *out_map_ptr = static_cast<char*>(alloc_info.pMappedData);
+ 
+diff --git a/Source/Core/VideoBackends/Vulkan/VKBoundingBox.cpp b/Source/Core/VideoBackends/Vulkan/VKBoundingBox.cpp
+--- a/Source/Core/VideoBackends/Vulkan/VKBoundingBox.cpp
++++ b/Source/Core/VideoBackends/Vulkan/VKBoundingBox.cpp
+@@ -22,6 +22,15 @@
+   }
+ }
+ 
++void VKBoundingBox::ChimeraDropDeviceObjects()
++{
++  if (m_gpu_buffer != VK_NULL_HANDLE)
++    vmaDestroyBuffer(g_vulkan_context->GetMemoryAllocator(), m_gpu_buffer, m_gpu_allocation);
++  m_gpu_buffer = VK_NULL_HANDLE;
++  m_gpu_allocation = VK_NULL_HANDLE;
++  m_readback_buffer.reset();
++}
++
+ bool VKBoundingBox::Initialize()
+ {
+   if (!CreateGPUBuffer())
+diff --git a/Source/Core/VideoBackends/Vulkan/VKBoundingBox.h b/Source/Core/VideoBackends/Vulkan/VKBoundingBox.h
+--- a/Source/Core/VideoBackends/Vulkan/VKBoundingBox.h
++++ b/Source/Core/VideoBackends/Vulkan/VKBoundingBox.h
+@@ -24,6 +24,10 @@
+ 
+   bool Initialize() override;
+ 
++  // chimera: let go of what was made on a device a savestate load destroyed;
++  // Initialize() makes it again (VKGfx.cpp)
++  void ChimeraDropDeviceObjects();
++
+ protected:
+   std::vector<BBoxType> Read(u32 index, u32 length) override;
+   void Write(u32 index, std::span<const BBoxType> values) override;
+diff --git a/Source/Core/VideoBackends/Vulkan/VKGfx.cpp b/Source/Core/VideoBackends/Vulkan/VKGfx.cpp
+--- a/Source/Core/VideoBackends/Vulkan/VKGfx.cpp
++++ b/Source/Core/VideoBackends/Vulkan/VKGfx.cpp
+@@ -26,6 +26,23 @@
+ #include "VideoCommon/RenderState.h"
+ #include "VideoCommon/VideoConfig.h"
+ 
++// chimera: for the code at the end of this file
++#include <cstring>
++#include <memory>
++#include <vector>
++#include "VideoBackends/Vulkan/VKBoundingBox.h"
++#include "VideoBackends/Vulkan/VKPerfQuery.h"
++#include "VideoBackends/Vulkan/VKVertexManager.h"
++#include "VideoCommon/AbstractStagingTexture.h"
++#include "VideoCommon/BPFunctions.h"
++#include "VideoCommon/BPMemory.h"
++#include "VideoCommon/XFMemory.h"
++#include "VideoCommon/BoundingBox.h"
++#include "VideoCommon/PerfQueryBase.h"
++#include "VideoCommon/ShaderCache.h"
++#include "VideoCommon/TextureCacheBase.h"
++#include "VideoCommon/VertexManagerBase.h"
++
+ namespace Vulkan
+ {
+ VKGfx::VKGfx(std::unique_ptr<SwapChain> swap_chain, float backbuffer_scale)
+@@ -622,4 +639,525 @@
+           m_swap_chain ? m_swap_chain->GetTextureFormat() : AbstractTextureFormat::Undefined};
+ }
+ 
++
++// ---------------------------------------------------------------------------
++// chimera: A SAVESTATE LOADED INTO CHIMERA IS A NEW VULKAN DEVICE.
++//
++// The frontend destroys its device at every load and makes another (miniBox
++// source/vk); a handle from before the load is refused there. So this backend
++// makes everything again - the device, and every object the shared video code
++// made on it - as the OpenGL backend does for a context that moved
++// (OGLGfx.cpp, ChimeraRebuildGLObjects; chimera issues 43, 126 and 190).
++//
++// Two halves, and the order within the first matters. While the old objects
++// are let go of, nothing crosses to the frontend (chimera_dolphin_vulkan_quiet:
++// they are gone there already). The shared code's objects go FIRST: their
++// destructors hand the handles to the command buffer manager to destroy later,
++// and that has to be the old manager, which is dropped next with the rest of
++// the old device. Then commands cross again, and everything is made.
++//
++// What is kept is what the machine knows: the texture cache's entries for EFB
++// and XFB copies, the vertex loaders, the shader UIDs. What a state carried of
++// the card's contents is given back at the end (ChimeraRestoreShadow, below).
++// ---------------------------------------------------------------------------
++void ChimeraDropDevice();
++bool ChimeraMakeDevice();
+ }  // namespace Vulkan
++
++extern "C" uint64_t chimera_dolphin_vulkan_context(void) __attribute__((weak));
++extern "C" void chimera_dolphin_vulkan_quiet(void) __attribute__((weak));
++extern "C" void chimera_dolphin_vulkan_old_device_gone(void) __attribute__((weak));
++
++namespace
++{
++// set after a load (StateLoaded), read and cleared at the head of the next frame
++bool s_chimera_state_loaded = false;
++// the device this backend's objects were made on. In emulated memory, so a load
++// brings back the value the state was made under - which is the point.
++uint64_t s_chimera_saved_context = 0;
++
++// THE FRAME BEING DRAWN AND THE TEXTURE CACHE'S COPIES ARE ON THE CARD AND
++// NOWHERE ELSE (chimera issue 190). The same table the OpenGL backend keeps,
++// in the same two blocks (the driver hands them to both): written before a
++// state is taken, read after a load. See OGLGfx.cpp for why each kind is here.
++constexpr u64 CHIMERA_SHADOW_MAGIC = 0x3257444853584843ull;
++constexpr u32 CHIMERA_SHADOW_MAX_RECORDS = 1024;
++
++enum : u32
++{
++  CHIMERA_EFB_COLOR = 1,
++  CHIMERA_EFB_DEPTH = 2,  // as the colour ResolveEFBDepthTexture makes of it
++  CHIMERA_CACHE_COPY = 3,
++  CHIMERA_PENDING_COPY = 4,
++};
++
++struct ChimeraShadowHeader
++{
++  u64 magic;
++  u32 count;
++  u32 unused;
++  u64 end;  // bytes of pixels in use
++};
++
++struct ChimeraShadowRecord
++{
++  u64 owner;  // the TCacheEntry, for the two kinds that have one
++  u64 offset;
++  u64 bytes;
++  u32 kind;
++  u32 width;
++  u32 height;
++  u32 flags;  // the texture's AbstractTextureFlag bits
++};
++
++constexpr size_t CHIMERA_SHADOW_TABLE_BYTES =
++    sizeof(ChimeraShadowHeader) + CHIMERA_SHADOW_MAX_RECORDS * sizeof(ChimeraShadowRecord);
++
++u8* s_chimera_block = nullptr;
++size_t s_chimera_block_bytes = 0;
++u8* s_chimera_scratch = nullptr;
++size_t s_chimera_scratch_bytes = 0;
++// the block holds this device's frame (set by a save, cleared by the next frame)
++bool s_chimera_current = false;
++// what the last load brought is usable (worked out after the load)
++bool s_chimera_usable = false;
++
++ChimeraShadowHeader* ChimeraHeader()
++{
++  return reinterpret_cast<ChimeraShadowHeader*>(s_chimera_block);
++}
++ChimeraShadowRecord* ChimeraRecords()
++{
++  return reinterpret_cast<ChimeraShadowRecord*>(s_chimera_block + sizeof(ChimeraShadowHeader));
++}
++u8* ChimeraPixels()
++{
++  return s_chimera_block + CHIMERA_SHADOW_TABLE_BYTES;
++}
++size_t ChimeraPixelBytes()
++{
++  return s_chimera_block_bytes - CHIMERA_SHADOW_TABLE_BYTES;
++}
++u8* ChimeraBand()
++{
++  return s_chimera_scratch + CHIMERA_SHADOW_TABLE_BYTES;
++}
++size_t ChimeraBandBytes()
++{
++  return s_chimera_scratch_bytes - CHIMERA_SHADOW_TABLE_BYTES;
++}
++
++// One texture to read through for each size and format met, kept between
++// states: making one is a buffer made on the card, at every state otherwise.
++struct ChimeraReader
++{
++  u32 width, height;
++  AbstractTextureFormat format;
++  std::unique_ptr<AbstractStagingTexture> staging;
++};
++std::vector<ChimeraReader> s_chimera_readers;
++
++AbstractStagingTexture* ChimeraReaderFor(u32 width, u32 height, AbstractTextureFormat format)
++{
++  for (ChimeraReader& reader : s_chimera_readers)
++  {
++    if (reader.width == width && reader.height == height && reader.format == format)
++      return reader.staging.get();
++  }
++  if (s_chimera_readers.size() >= 16)
++    s_chimera_readers.erase(s_chimera_readers.begin());
++  auto staging = g_gfx->CreateStagingTexture(
++      StagingTextureType::Readback,
++      TextureConfig(width, height, 1, 1, 1, format, 0, AbstractTextureType::Texture_2DArray));
++  if (!staging)
++    return nullptr;
++  s_chimera_readers.push_back({width, height, format, std::move(staging)});
++  return s_chimera_readers.back().staging.get();
++}
++
++// A texture's pixels (four bytes each) into the block at `at`, a band of rows
++// at a time through the scratch block, and written only where they differ: an
++// unchanged surface then costs the next state nothing.
++bool ChimeraReadTexture(AbstractTexture* texture, u32 width, u32 height, u8* at)
++{
++  AbstractStagingTexture* const staging = ChimeraReaderFor(width, height, texture->GetFormat());
++  if (!staging)
++    return false;
++  const MathUtil::Rectangle<int> whole(0, 0, int(width), int(height));
++  staging->CopyFromTexture(texture, whole, 0, 0, whole);
++  staging->Flush();
++  if (!staging->Map())
++    return false;
++  const size_t row_bytes = size_t(width) * 4;
++  const u32 band = std::max<u32>(1, u32(ChimeraBandBytes() / row_bytes));
++  for (u32 y = 0; y < height; y += band)
++  {
++    const u32 rows = std::min(band, height - y);
++    const size_t bytes = row_bytes * rows;
++    staging->ReadTexels(MathUtil::Rectangle<int>(0, int(y), int(width), int(y + rows)),
++                        ChimeraBand(), u32(row_bytes));
++    u8* const dst = at + size_t(y) * row_bytes;
++    if (std::memcmp(dst, ChimeraBand(), bytes) != 0)
++      std::memcpy(dst, ChimeraBand(), bytes);
++  }
++  staging->Unmap();
++  return true;
++}
++
++const ChimeraShadowRecord* ChimeraFind(u32 kind, u64 owner)
++{
++  const ChimeraShadowHeader* const header = ChimeraHeader();
++  const ChimeraShadowRecord* const records = ChimeraRecords();
++  for (u32 i = 0; i < header->count; i++)
++  {
++    if (records[i].kind == kind && records[i].owner == owner)
++      return &records[i];
++  }
++  return nullptr;
++}
++
++bool ChimeraShadowUsable()
++{
++  return s_chimera_block && ChimeraHeader()->magic == CHIMERA_SHADOW_MAGIC &&
++         ChimeraHeader()->count <= CHIMERA_SHADOW_MAX_RECORDS;
++}
++
++bool ChimeraCarriable(const AbstractTexture* texture)
++{
++  return texture && !texture->IsMultisampled() && texture->GetLayers() == 1 &&
++         texture->GetLevels() == 1 && texture->GetFormat() == AbstractTextureFormat::RGBA8 &&
++         texture->GetWidth() > 0 && texture->GetHeight() > 0;
++}
++
++bool ChimeraWanted(const TCacheEntry* entry)
++{
++  if (entry->is_xfb_copy || entry->is_xfb_container)
++    return !g_ActiveConfig.bChimeraXfbFromRamOnly;
++  return entry->is_efb_copy;
++}
++
++void ChimeraLetGoOfTextureCache(bool keep)
++{
++  if (!g_texture_cache)
++    return;
++  if (!keep || !ChimeraShadowUsable())
++  {
++    g_texture_cache->ChimeraLetGo(nullptr, nullptr);
++    return;
++  }
++  g_texture_cache->ChimeraLetGo(
++      [](TCacheEntry* entry) {
++        return ChimeraFind(CHIMERA_CACHE_COPY, reinterpret_cast<u64>(entry)) != nullptr;
++      },
++      [](TCacheEntry* entry) {
++        return ChimeraFind(CHIMERA_PENDING_COPY, reinterpret_cast<u64>(entry)) != nullptr;
++      });
++}
++
++// a texture made of bytes the block carried, to draw or to seat
++std::unique_ptr<AbstractTexture> ChimeraTextureOf(const ChimeraShadowRecord& rec,
++                                                  AbstractTextureFormat format)
++{
++  auto texture = g_gfx->CreateTexture(TextureConfig(rec.width, rec.height, 1, 1, 1, format, 0,
++                                                    AbstractTextureType::Texture_2DArray),
++                                      "chimera: carried by a state");
++  if (texture)
++    texture->Load(0, rec.width, rec.height, rec.width, ChimeraPixels() + rec.offset,
++                  size_t(rec.bytes));
++  return texture;
++}
++
++void ChimeraRestoreShadow()
++{
++  if (!ChimeraShadowUsable() || !g_framebuffer_manager || !g_texture_cache)
++    return;
++  u8* const pixels = ChimeraPixels();
++  const auto fits = [](const ChimeraShadowRecord* rec) {
++    return rec && rec->bytes == u64(rec->width) * rec->height * 4 &&
++           rec->offset + rec->bytes <= ChimeraPixelBytes();
++  };
++
++  // The EFB, both or neither: two textures made of the bytes, drawn over it
++  // the way upstream's own savestates give an EFB back (DoLoadState).
++  AbstractTexture* const color = g_framebuffer_manager->GetEFBColorTexture();
++  AbstractTexture* const depth = g_framebuffer_manager->GetEFBDepthTexture();
++  const ChimeraShadowRecord* const color_rec = ChimeraFind(CHIMERA_EFB_COLOR, 0);
++  const ChimeraShadowRecord* const depth_rec = ChimeraFind(CHIMERA_EFB_DEPTH, 0);
++  if (fits(color_rec) && fits(depth_rec) && color && depth && !color->IsMultisampled() &&
++      color->GetLayers() == 1 && color->GetWidth() == color_rec->width &&
++      color->GetHeight() == color_rec->height && depth_rec->width == color_rec->width &&
++      depth_rec->height == color_rec->height)
++  {
++    auto color_copy = ChimeraTextureOf(*color_rec, FramebufferManager::GetEFBColorFormat());
++    auto depth_copy = ChimeraTextureOf(*depth_rec, FramebufferManager::GetEFBDepthCopyFormat());
++    if (color_copy && depth_copy)
++      g_framebuffer_manager->ChimeraRestoreEFB(color_copy.get(), depth_copy.get());
++  }
++
++  // The texture cache's copies: a new texture for each entry that was kept.
++  std::vector<TCacheEntry*> lost;
++  const ChimeraShadowHeader* const header = ChimeraHeader();
++  const ChimeraShadowRecord* const records = ChimeraRecords();
++  for (u32 i = 0; i < header->count; i++)
++  {
++    const ChimeraShadowRecord& rec = records[i];
++    TCacheEntry* const entry = reinterpret_cast<TCacheEntry*>(rec.owner);
++    if (rec.kind == CHIMERA_CACHE_COPY)
++    {
++      bool ok = false;
++      if (fits(&rec))
++      {
++        const TextureConfig config(rec.width, rec.height, 1, 1, 1, AbstractTextureFormat::RGBA8,
++                                   rec.flags, AbstractTextureType::Texture_2DArray);
++        if (g_texture_cache->ChimeraReseat(entry, config))
++        {
++          entry->texture->Load(0, rec.width, rec.height, rec.width, pixels + rec.offset,
++                               size_t(rec.bytes));
++          ok = true;
++        }
++      }
++      if (!ok)
++        lost.push_back(entry);
++    }
++    else if (rec.kind == CHIMERA_PENDING_COPY)
++    {
++      if (rec.offset + rec.bytes > ChimeraPixelBytes() ||
++          !g_texture_cache->ChimeraReseatPending(entry, pixels + rec.offset, size_t(rec.bytes)))
++      {
++        lost.push_back(entry);
++      }
++    }
++  }
++  for (TCacheEntry* entry : lost)
++    g_texture_cache->ChimeraDrop(entry);
++
++  // drawing over the EFB left the renderer on its own state; back to the machine's
++  g_framebuffer_manager->BindEFBFramebuffer();
++  BPFunctions::SetScissorAndViewport(g_framebuffer_manager.get(), bpmem.scissorTL,
++                                     bpmem.scissorBR, bpmem.scissorOffset, xfmem.viewport);
++}
++}  // namespace
++
++namespace Vulkan
++{
++void VKGfx::ChimeraRebuild(bool keep)
++{
++  // ---- let go, with nothing crossing ----
++  if (&chimera_dolphin_vulkan_quiet)
++    chimera_dolphin_vulkan_quiet();
++
++  s_chimera_readers.clear();
++  ChimeraLetGoOfTextureCache(keep);
++  g_texture_cache->ChimeraUtilityTextures(false);
++  // (the shader cache before the EFB: it finishes the pipelines it had queued
++  // on the way, and those ask the EFB what they draw into)
++  g_shader_cache->ChimeraClearCaches();
++  g_framebuffer_manager->ChimeraDestroyDeviceObjects();
++  VertexManager* const vertex_manager = static_cast<VertexManager*>(g_vertex_manager.get());
++  vertex_manager->ChimeraDropDeviceObjects();
++  if (g_backend_info.bSupportsBBox)
++    static_cast<VKBoundingBox*>(g_bounding_box.get())->ChimeraDropDeviceObjects();
++  g_perf_query.reset();
++  m_current_framebuffer = nullptr;
++  ChimeraDropDevice();
++
++  if (&chimera_dolphin_vulkan_old_device_gone)
++    chimera_dolphin_vulkan_old_device_gone();
++
++  // ---- make, on the device there is now ----
++  if (!ChimeraMakeDevice())
++  {
++    PanicAlertFmt("chimera: the Vulkan device could not be made again after a savestate was loaded");
++    return;
++  }
++  for (SamplerState& sampler_state : m_sampler_states)
++    sampler_state = RenderState::GetPointSamplerState();
++
++  if (!vertex_manager->ChimeraMakeDeviceObjects())
++    PanicAlertFmt("chimera: the stream buffers could not be made again");
++  g_perf_query = std::make_unique<PerfQuery>();
++  if (!g_perf_query->Initialize())
++    PanicAlertFmt("chimera: the query pool could not be made again");
++  if (g_backend_info.bSupportsBBox && !g_bounding_box->Initialize())
++    PanicAlertFmt("chimera: the bounding box buffer could not be made again");
++  // The order is start-up's. The EFB's framebuffers first: the shader cache's
++  // pipelines are made for what they draw into. Then every shader and pipeline
++  // of the shader cache - the vertex manager keeps the pipeline it last drew
++  // with until its configuration changes, so it is told. Then the EFB's own
++  // pipelines, which are built from the shader cache's shaders.
++  if (!g_texture_cache->ChimeraUtilityTextures(true))
++    PanicAlertFmt("chimera: the texture cache's own textures could not be made again");
++  if (!g_framebuffer_manager->ChimeraCreateDeviceObjects(g_ActiveConfig.iEFBScale))
++    PanicAlertFmt("chimera: the EFB could not be made again");
++  g_vertex_manager->InvalidatePipelineObject();
++  g_shader_cache->Reload();
++  g_framebuffer_manager->RecompileShaders();
++
++  // The machine draws through BPFunctions::SetScissorAndViewport as soon as it
++  // runs again, and that asks for the current framebuffer without checking.
++  g_framebuffer_manager->BindEFBFramebuffer();
++
++  if (keep)
++    ChimeraRestoreShadow();
++}
++}  // namespace Vulkan
++
++// chimera: where the copy goes, given once during Init (the driver hands the
++// OpenGL backend the same two blocks; only one backend runs)
++extern "C" void chimera_dolphin_vk_efb_blocks(void* block, size_t block_bytes, void* scratch,
++                                              size_t scratch_bytes)
++{
++  s_chimera_block = static_cast<u8*>(block);
++  s_chimera_block_bytes = block_bytes;
++  s_chimera_scratch = static_cast<u8*>(scratch);
++  s_chimera_scratch_bytes = scratch_bytes;
++}
++
++// chimera: told after every load of the machine, before it runs again
++extern "C" void chimera_dolphin_vk_state_loaded(void)
++{
++  s_chimera_state_loaded = true;
++  s_chimera_usable = s_chimera_current;
++}
++
++// chimera: told before a state is taken, the machine stopped at a field's end
++extern "C" void chimera_dolphin_vk_state_saving(void)
++{
++  if (!s_chimera_block || !s_chimera_scratch || !(&chimera_dolphin_vulkan_context) ||
++      !g_framebuffer_manager || !g_vertex_manager || !g_texture_cache ||
++      s_chimera_block_bytes <= CHIMERA_SHADOW_TABLE_BYTES ||
++      s_chimera_scratch_bytes <= CHIMERA_SHADOW_TABLE_BYTES)
++    return;
++  // Another device than the objects': a state taken after a load and before
++  // the next frame. The handles here are nobody's, and the copy the load
++  // brought is still the card.
++  const uint64_t live = chimera_dolphin_vulkan_context();
++  if (live == 0 || live != s_chimera_saved_context)
++    return;
++
++  g_vertex_manager->Flush();
++  g_framebuffer_manager->FlushEFBPokes();
++
++  ChimeraShadowRecord* const fresh = reinterpret_cast<ChimeraShadowRecord*>(s_chimera_scratch);
++  u8* const pixels = ChimeraPixels();
++  u32 count = 0;
++  u64 end = 0;
++  // a texture's pixels, as a record; false when there is no room or no read
++  const auto add_texture = [&](u32 kind, u64 owner, AbstractTexture* texture) {
++    if (count == CHIMERA_SHADOW_MAX_RECORDS)
++      return false;
++    const u32 width = texture->GetWidth(), height = texture->GetHeight();
++    const u64 bytes = u64(width) * height * 4;
++    if (end + bytes > ChimeraPixelBytes() || size_t(width) * 4 > ChimeraBandBytes())
++      return false;
++    if (!ChimeraReadTexture(texture, width, height, pixels + end))
++      return false;
++    ChimeraShadowRecord rec = {};
++    rec.owner = owner;
++    rec.offset = end;
++    rec.bytes = bytes;
++    rec.kind = kind;
++    rec.width = width;
++    rec.height = height;
++    rec.flags = texture->GetConfig().flags;
++    fresh[count++] = rec;
++    end += bytes;
++    return true;
++  };
++
++  // The EFB: both textures or neither. A Vulkan depth texture is not read as
++  // one; ResolveEFBDepthTexture draws it into a colour of the same 32 bits,
++  // which is what upstream's own savestates keep.
++  AbstractTexture* const color = g_framebuffer_manager->GetEFBColorTexture();
++  AbstractTexture* const depth = g_framebuffer_manager->GetEFBDepthTexture();
++  if (color && depth && !color->IsMultisampled() && color->GetLayers() == 1 &&
++      color->GetFormat() == AbstractTextureFormat::RGBA8 && color->GetWidth() > 0 &&
++      color->GetHeight() > 0 &&
++      AbstractTexture::GetTexelSizeForFormat(FramebufferManager::GetEFBDepthCopyFormat()) == 4)
++  {
++    AbstractTexture* const depth_as_color =
++        g_framebuffer_manager->ResolveEFBDepthTexture(depth->GetRect(), true);
++    if (!depth_as_color || depth_as_color->GetWidth() != color->GetWidth() ||
++        depth_as_color->GetHeight() != color->GetHeight() ||
++        !add_texture(CHIMERA_EFB_COLOR, 0, color) ||
++        !add_texture(CHIMERA_EFB_DEPTH, 0, depth_as_color))
++    {
++      count = 0;
++      end = 0;
++    }
++    // the resolve drew; back to where the machine left the renderer
++    g_framebuffer_manager->BindEFBFramebuffer();
++    BPFunctions::SetScissorAndViewport(g_framebuffer_manager.get(), bpmem.scissorTL,
++                                     bpmem.scissorBR, bpmem.scissorOffset, xfmem.viewport);
++  }
++
++  // The texture cache's copies of the EFB and the XFB.
++  g_texture_cache->ChimeraForEachCopy([&](TCacheEntry* entry) {
++    if (ChimeraWanted(entry) && ChimeraCarriable(entry->texture.get()))
++      add_texture(CHIMERA_CACHE_COPY, reinterpret_cast<u64>(entry), entry->texture.get());
++  });
++
++  // And the copies still waiting to be written to the machine's memory: their
++  // bytes are in a staging texture, which is the card's too.
++  g_texture_cache->ChimeraForEachPendingCopy([&](TCacheEntry* entry) {
++    const u64 row_bytes = u64(entry->pending_efb_copy_width) * 4;
++    const u64 bytes = row_bytes * entry->pending_efb_copy_height;
++    if (count == CHIMERA_SHADOW_MAX_RECORDS || bytes == 0 || bytes > ChimeraBandBytes() ||
++        end + bytes > ChimeraPixelBytes() || entry->pending_efb_copy->GetTexelSize() != 4)
++      return;
++    const MathUtil::Rectangle<int> rect(0, 0, int(entry->pending_efb_copy_width),
++                                        int(entry->pending_efb_copy_height));
++    entry->pending_efb_copy->ReadTexels(rect, ChimeraBand(), u32(row_bytes));
++    if (std::memcmp(pixels + end, ChimeraBand(), size_t(bytes)) != 0)
++      std::memcpy(pixels + end, ChimeraBand(), size_t(bytes));
++    ChimeraShadowRecord rec = {};
++    rec.owner = reinterpret_cast<u64>(entry);
++    rec.offset = end;
++    rec.bytes = bytes;
++    rec.kind = CHIMERA_PENDING_COPY;
++    rec.width = entry->pending_efb_copy_width;
++    rec.height = entry->pending_efb_copy_height;
++    fresh[count++] = rec;
++    end += bytes;
++  });
++
++  ChimeraShadowHeader header = {};
++  header.magic = CHIMERA_SHADOW_MAGIC;
++  header.count = count;
++  header.end = end;
++  if (std::memcmp(ChimeraHeader(), &header, sizeof(header)) != 0)
++    *ChimeraHeader() = header;
++  if (count != 0 &&
++      std::memcmp(ChimeraRecords(), fresh, count * sizeof(ChimeraShadowRecord)) != 0)
++    std::memcpy(ChimeraRecords(), fresh, count * sizeof(ChimeraShadowRecord));
++  if (!s_chimera_current)
++    s_chimera_current = true;
++}
++
++// chimera: the driver calls this at the head of every frame, before the machine
++// steps - nothing is mid-draw. The same decision the OpenGL backend makes
++// (chimera_dolphin_gl_frame_start, where every line of it is argued).
++extern "C" void chimera_dolphin_vk_frame_start(void)
++{
++  if (!(&chimera_dolphin_vulkan_context))
++    return;
++  const bool after_load = s_chimera_state_loaded;
++  s_chimera_state_loaded = false;
++  const uint64_t live = chimera_dolphin_vulkan_context();
++  if (live == 0)
++    return;
++
++  const bool usable = after_load && s_chimera_usable;
++  s_chimera_usable = false;
++
++  if (live != s_chimera_saved_context && (s_chimera_saved_context != 0 || after_load))
++  {
++    WARN_LOG_FMT(VIDEO,
++                 "chimera: these Vulkan objects came from another device ({}, now {}); rebuilding",
++                 s_chimera_saved_context, live);
++    static_cast<Vulkan::VKGfx*>(g_gfx.get())->ChimeraRebuild(usable);
++  }
++  s_chimera_saved_context = live;
++  if (s_chimera_current)
++    s_chimera_current = false;
++}
+diff --git a/Source/Core/VideoBackends/Vulkan/VKGfx.h b/Source/Core/VideoBackends/Vulkan/VKGfx.h
+--- a/Source/Core/VideoBackends/Vulkan/VKGfx.h
++++ b/Source/Core/VideoBackends/Vulkan/VKGfx.h
+@@ -96,6 +96,12 @@
+   void OnSwapChainResized();
+   void BindFramebuffer(VKFramebuffer* fb);
+ 
++public:
++  // chimera: everything made on the Vulkan device is made again on the one a
++  // savestate load leaves behind; see the end of VKGfx.cpp
++  void ChimeraRebuild(bool keep_what_a_state_carried);
++
++private:
+   std::unique_ptr<SwapChain> m_swap_chain;
+   float m_backbuffer_scale;
+ 
+diff --git a/Source/Core/VideoBackends/Vulkan/VKMain.cpp b/Source/Core/VideoBackends/Vulkan/VKMain.cpp
+--- a/Source/Core/VideoBackends/Vulkan/VKMain.cpp
++++ b/Source/Core/VideoBackends/Vulkan/VKMain.cpp
+@@ -236,6 +236,55 @@
+                           std::move(bounding_box));
+ }
+ 
++// chimera: the device, dropped and made again (VKGfx.cpp, ChimeraRebuild). A
++// savestate loaded into Chimera leaves the frontend with a new Vulkan device;
++// everything below the shared video code is let go of and made as Initialize()
++// makes it, without a window. The shared code's objects are the caller's to
++// let go of first, and to make again after.
++void ChimeraDropDevice()
++{
++  if (g_object_cache)
++    g_object_cache->Shutdown();
++  g_object_cache.reset();
++  StateTracker::DestroyInstance();
++  g_command_buffer_mgr.reset();
++  g_vulkan_context.reset();
++}
++
++bool ChimeraMakeDevice()
++{
++  u32 vk_api_version = 0;
++  VkInstance instance = VulkanContext::CreateVulkanInstance(WindowSystemType::Headless, false,
++                                                            false, &vk_api_version);
++  if (instance == VK_NULL_HANDLE)
++    return false;
++  if (!LoadVulkanInstanceFunctions(instance))
++  {
++    vkDestroyInstance(instance, nullptr);
++    return false;
++  }
++  VulkanContext::GPUList gpu_list = VulkanContext::EnumerateGPUs(instance);
++  if (gpu_list.empty())
++  {
++    vkDestroyInstance(instance, nullptr);
++    return false;
++  }
++  size_t adapter = static_cast<size_t>(g_Config.iAdapter);
++  if (adapter >= gpu_list.size())
++    adapter = 0;
++  g_vulkan_context = VulkanContext::Create(instance, gpu_list[adapter], VK_NULL_HANDLE, false,
++                                           false, vk_api_version);
++  if (!g_vulkan_context)
++    return false;
++  g_object_cache = std::make_unique<ObjectCache>();
++  if (!g_object_cache->Initialize())
++    return false;
++  g_command_buffer_mgr = std::make_unique<CommandBufferManager>(g_Config.bBackendMultithreading);
++  if (!g_command_buffer_mgr->Initialize(0))
++    return false;
++  return StateTracker::CreateInstance();
++}
++
+ void VideoBackend::Shutdown()
+ {
+   if (g_vulkan_context)
+diff --git a/Source/Core/VideoBackends/Vulkan/VKStreamBuffer.cpp b/Source/Core/VideoBackends/Vulkan/VKStreamBuffer.cpp
+--- a/Source/Core/VideoBackends/Vulkan/VKStreamBuffer.cpp
++++ b/Source/Core/VideoBackends/Vulkan/VKStreamBuffer.cpp
+@@ -57,6 +57,13 @@
+   alloc_create_info.priority = 0.0;
+   alloc_create_info.requiredFlags = 0;
+   alloc_create_info.preferredFlags = 0;
++#ifdef CHIMERA_GUEST_VK
++  // chimera: cached, not write-combined - see StagingBuffer.cpp
++  alloc_create_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
++                            VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT |
++                            VMA_ALLOCATION_CREATE_MAPPED_BIT;
++  alloc_create_info.preferredFlags = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
++#endif
+ 
+   VkBuffer buffer = VK_NULL_HANDLE;
+   VmaAllocation alloc = VK_NULL_HANDLE;
+diff --git a/Source/Core/VideoBackends/Vulkan/VKVertexManager.cpp b/Source/Core/VideoBackends/Vulkan/VKVertexManager.cpp
+--- a/Source/Core/VideoBackends/Vulkan/VKVertexManager.cpp
++++ b/Source/Core/VideoBackends/Vulkan/VKVertexManager.cpp
+@@ -25,6 +25,23 @@
+ 
+ namespace Vulkan
+ {
++#ifdef CHIMERA_GUEST_VK
++// chimera: these buffers are mapped for as long as the backend lives, and
++// through Chimera's Vulkan bridge a mapped byte is a byte of the core's own
++// memory - in every savestate, and copied when the mapping is made, which is
++// after every load. Upstream's sizes (48, 8, 64 and 16 MiB) are sized for
++// never having to wait; a buffer that fills up submits and starts again, so
++// smaller is only slower in a frame that draws more than these hold. The
++// vertex buffer has to hold one reservation of MAXVBUFFERSIZE (16 MiB).
++static constexpr u32 CHIMERA_VERTEX_STREAM_BUFFER_SIZE = 24 * 1024 * 1024;
++static constexpr u32 CHIMERA_INDEX_STREAM_BUFFER_SIZE = 2 * 1024 * 1024;
++static constexpr u32 CHIMERA_UNIFORM_STREAM_BUFFER_SIZE = 8 * 1024 * 1024;
++static constexpr u32 CHIMERA_TEXEL_STREAM_BUFFER_SIZE = 8 * 1024 * 1024;
++#define VERTEX_STREAM_BUFFER_SIZE CHIMERA_VERTEX_STREAM_BUFFER_SIZE
++#define INDEX_STREAM_BUFFER_SIZE CHIMERA_INDEX_STREAM_BUFFER_SIZE
++#define UNIFORM_STREAM_BUFFER_SIZE CHIMERA_UNIFORM_STREAM_BUFFER_SIZE
++#define TEXEL_STREAM_BUFFER_SIZE CHIMERA_TEXEL_STREAM_BUFFER_SIZE
++#endif
+ static VkBufferView CreateTexelBufferView(VkBuffer buffer, VkFormat vk_format)
+ {
+   // Create a view of the whole buffer, we'll offset our texel load into it
+@@ -61,6 +78,25 @@
+   if (!VertexManagerBase::Initialize())
+     return false;
+ 
++  return ChimeraMakeDeviceObjects();
++}
++
++void VertexManager::ChimeraDropDeviceObjects()
++{
++  // A savestate can be taken mid-batch: it brings back write pointers into the
++  // buffer dropped here. That batch is abandoned - the machine re-issues its
++  // commands from the restored FIFO (see OGLVertexManager.cpp).
++  ChimeraDiscardPendingBatch();
++  DestroyTexelBufferViews();
++  m_texel_buffer_views = {};
++  m_vertex_stream_buffer.reset();
++  m_index_stream_buffer.reset();
++  m_uniform_stream_buffer.reset();
++  m_texel_stream_buffer.reset();
++}
++
++bool VertexManager::ChimeraMakeDeviceObjects()
++{
+   m_vertex_stream_buffer =
+       StreamBuffer::Create(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                            VERTEX_STREAM_BUFFER_SIZE);
+diff --git a/Source/Core/VideoBackends/Vulkan/VKVertexManager.h b/Source/Core/VideoBackends/Vulkan/VKVertexManager.h
+--- a/Source/Core/VideoBackends/Vulkan/VKVertexManager.h
++++ b/Source/Core/VideoBackends/Vulkan/VKVertexManager.h
+@@ -37,6 +37,15 @@
+ 
+   void DestroyTexelBufferViews();
+ 
++public:
++  // chimera: the buffers and views this class made on the device - let go of,
++  // and made again on the device a savestate load leaves behind (VKGfx.cpp).
++  // A batch that was being gathered is abandoned, as the OpenGL backend does.
++  void ChimeraDropDeviceObjects();
++  bool ChimeraMakeDeviceObjects();
++
++protected:
++
+   void UpdateVertexShaderConstants();
+   void UpdateGeometryShaderConstants();
+   void UpdatePixelShaderConstants();
+diff --git a/Source/Core/VideoBackends/Vulkan/VulkanContext.cpp b/Source/Core/VideoBackends/Vulkan/VulkanContext.cpp
+--- a/Source/Core/VideoBackends/Vulkan/VulkanContext.cpp
++++ b/Source/Core/VideoBackends/Vulkan/VulkanContext.cpp
+@@ -836,7 +836,14 @@
+   allocator_info.flags = VMA_ALLOCATOR_CREATE_EXTERNALLY_SYNCHRONIZED_BIT;
+   allocator_info.physicalDevice = m_physical_device;
+   allocator_info.device = m_device;
++#ifdef CHIMERA_GUEST_VK
++  // chimera: a block that holds one mapped buffer is mapped whole, and through
++  // Chimera's Vulkan bridge a mapped byte is a byte of the core's memory - in
++  // every savestate, and copied when the mapping is made.
++  allocator_info.preferredLargeHeapBlockSize = 16 << 20;
++#else
+   allocator_info.preferredLargeHeapBlockSize = 64 << 20;
++#endif
+   allocator_info.pAllocationCallbacks = nullptr;
+   allocator_info.pDeviceMemoryCallbacks = nullptr;
+   allocator_info.pHeapSizeLimit = nullptr;
+diff --git a/Source/Core/VideoBackends/Vulkan/VulkanLoader.cpp b/Source/Core/VideoBackends/Vulkan/VulkanLoader.cpp
+--- a/Source/Core/VideoBackends/Vulkan/VulkanLoader.cpp
++++ b/Source/Core/VideoBackends/Vulkan/VulkanLoader.cpp
+@@ -39,6 +39,13 @@
+ #undef VULKAN_MODULE_ENTRY_POINT
+ }
+ 
++#ifdef CHIMERA_GUEST_VK
++// chimera: no library is opened in a sandbox. Every Vulkan command is a wrapper
++// linked into the core (miniBox source/vk) that hands the call to the frontend,
++// and this asks for each by name. A name the frontend's list does not carry
++// comes back null, as a missing symbol would.
++extern "C" void* chimera_vk_lookup(const char* name);
++#else
+ static Common::DynamicLibrary s_vulkan_module;
+ 
+ static bool OpenVulkanLibrary(bool force_system_library)
+@@ -92,8 +99,23 @@
+ #endif
+ }
+ 
++#endif  // !CHIMERA_GUEST_VK
++
+ bool LoadVulkanLibrary(bool force_system_library)
+ {
++#ifdef CHIMERA_GUEST_VK
++#define VULKAN_MODULE_ENTRY_POINT(name, required)                                                  \
++  name = reinterpret_cast<decltype(name)>(chimera_vk_lookup(#name));                               \
++  if (!name && required)                                                                           \
++  {                                                                                                \
++    ERROR_LOG_FMT(VIDEO, "Vulkan: Chimera's bridge has no {}", #name);                             \
++    ResetVulkanLibraryFunctionPointers();                                                          \
++    return false;                                                                                  \
++  }
++#include "VideoBackends/Vulkan/VulkanEntryPoints.inl"
++#undef VULKAN_MODULE_ENTRY_POINT
++  return true;
++#else
+   if (!s_vulkan_module.IsOpen() && !OpenVulkanLibrary(force_system_library))
+     return false;
+ 
+@@ -109,20 +131,29 @@
+ #undef VULKAN_MODULE_ENTRY_POINT
+ 
+   return true;
++#endif
+ }
+ 
+ void UnloadVulkanLibrary()
+ {
++#ifdef CHIMERA_GUEST_VK
++  ResetVulkanLibraryFunctionPointers();
++#else
+   s_vulkan_module.Close();
+   if (!s_vulkan_module.IsOpen())
+     ResetVulkanLibraryFunctionPointers();
++#endif
+ }
+ 
+ bool LoadVulkanInstanceFunctions(VkInstance instance)
+ {
+   bool required_functions_missing = false;
+   auto LoadFunction = [&](PFN_vkVoidFunction* func_ptr, const char* name, bool is_required) {
++#ifdef CHIMERA_GUEST_VK
++    *func_ptr = reinterpret_cast<PFN_vkVoidFunction>(chimera_vk_lookup(name));
++#else
+     *func_ptr = vkGetInstanceProcAddr(instance, name);
++#endif
+     if (!(*func_ptr) && is_required)
+     {
+       ERROR_LOG_FMT(HOST_GPU, "Vulkan: Failed to load required instance function {}", name);
+@@ -142,7 +173,11 @@
+ {
+   bool required_functions_missing = false;
+   auto LoadFunction = [&](PFN_vkVoidFunction* func_ptr, const char* name, bool is_required) {
++#ifdef CHIMERA_GUEST_VK
++    *func_ptr = reinterpret_cast<PFN_vkVoidFunction>(chimera_vk_lookup(name));
++#else
+     *func_ptr = vkGetDeviceProcAddr(device, name);
++#endif
+     if (!(*func_ptr) && is_required)
+     {
+       ERROR_LOG_FMT(HOST_GPU, "Vulkan: Failed to load required device function {}", name);
+diff --git a/Source/Core/VideoCommon/FramebufferManager.cpp b/Source/Core/VideoCommon/FramebufferManager.cpp
+--- a/Source/Core/VideoCommon/FramebufferManager.cpp
++++ b/Source/Core/VideoCommon/FramebufferManager.cpp
+@@ -90,6 +90,47 @@
+   return true;
+ }
+ 
++void FramebufferManager::ChimeraDestroyDeviceObjects()
++{
++  // pokes that were waiting were for a frame the load replaced
++  m_color_poke_vertices.clear();
++  m_depth_poke_vertices.clear();
++  InvalidatePeekCache(true);
++  DestroyClearPipelines();
++  DestroyPokePipelines();
++  DestroyConversionPipelines();
++  DestroyReadbackPipelines();
++  // two pipelines no Destroy function lets go of: upstream replaces them when
++  // it compiles them again, which here would be after their device is gone
++  m_efb_restore_pipeline.reset();
++  m_efb_color_resolve_pipeline.reset();
++  DestroyReadbackFramebuffer();
++  DestroyEFBFramebuffer();
++}
++
++bool FramebufferManager::ChimeraCreateDeviceObjects(int efb_scale)
++{
++  // The first half of Initialize(). The pipelines are RecompileShaders()'s to
++  // make, once the shader cache has its shaders again - and the shader cache
++  // needs these framebuffers first, to know what its own pipelines draw into.
++  return CreateEFBFramebuffer(efb_scale) && CreateReadbackFramebuffer();
++}
++
++void FramebufferManager::ChimeraRestoreEFB(AbstractTexture* color, AbstractTexture* depth)
++{
++  InvalidatePeekCache(true);
++  g_gfx->BeginUtilityDrawing();
++  g_gfx->SetAndDiscardFramebuffer(m_efb_framebuffer.get());
++  g_gfx->SetViewportAndScissor(m_efb_framebuffer->GetRect());
++  g_gfx->SetPipeline(m_efb_restore_pipeline.get());
++  g_gfx->SetTexture(0, color);
++  g_gfx->SetTexture(1, depth);
++  g_gfx->SetSamplerState(0, RenderState::GetPointSamplerState());
++  g_gfx->SetSamplerState(1, RenderState::GetPointSamplerState());
++  g_gfx->Draw(0, 3);
++  g_gfx->EndUtilityDrawing();
++}
++
+ void FramebufferManager::RecreateEFBFramebuffer(int efb_scale)
+ {
+   FlushEFBPokes();
+diff --git a/Source/Core/VideoCommon/FramebufferManager.h b/Source/Core/VideoCommon/FramebufferManager.h
+--- a/Source/Core/VideoCommon/FramebufferManager.h
++++ b/Source/Core/VideoCommon/FramebufferManager.h
+@@ -128,6 +128,17 @@
+   void PokeEFBDepth(u32 x, u32 y, float depth);
+   void FlushEFBPokes();
+ 
++  // chimera: for a backend whose device is made again after a savestate is
++  // loaded (Vulkan, through Chimera's bridge). Everything this class made on
++  // the device is let go of, and its framebuffers made again on the new one
++  // (RecompileShaders() makes the pipelines); what it knows of the machine is
++  // kept. The third gives the frame being drawn back to the
++  // EFB, from a colour texture and its depth as a colour (what
++  // ResolveEFBDepthTexture hands out), the way DoLoadState does.
++  void ChimeraDestroyDeviceObjects();
++  bool ChimeraCreateDeviceObjects(int efb_scale);
++  void ChimeraRestoreEFB(AbstractTexture* color, AbstractTexture* depth);
++
+   // Save state load/save.
+   void DoState(PointerWrap& p);
+ 
+diff --git a/Source/Core/VideoCommon/ShaderCache.cpp b/Source/Core/VideoCommon/ShaderCache.cpp
+--- a/Source/Core/VideoCommon/ShaderCache.cpp
++++ b/Source/Core/VideoCommon/ShaderCache.cpp
+@@ -107,6 +107,13 @@
+   m_async_shader_compiler->RetrieveWorkItems();
+ }
+ 
++void ShaderCache::ChimeraClearCaches()
++{
++  WaitForAsyncCompiler();
++  ClosePipelineUIDCache();
++  ClearCaches();
++}
++
+ void ShaderCache::Shutdown()
+ {
+   // This may leave shaders uncommitted to the cache, but it's better than blocking shutdown
+diff --git a/Source/Core/VideoCommon/ShaderCache.h b/Source/Core/VideoCommon/ShaderCache.h
+--- a/Source/Core/VideoCommon/ShaderCache.h
++++ b/Source/Core/VideoCommon/ShaderCache.h
+@@ -114,6 +114,11 @@
+   const AbstractShader* GetTextureDecodingShader(TextureFormat format,
+                                                  std::optional<TLUTFormat> palette_format);
+ 
++  // chimera: every shader and pipeline is let go of, while the device they
++  // were made on can still be named (see FramebufferManager.h). Reload() makes
++  // them again.
++  void ChimeraClearCaches();
++
+ private:
+   static constexpr size_t NUM_PALETTE_CONVERSION_SHADERS = 3;
+ 
+diff --git a/Source/Core/VideoCommon/TextureCacheBase.cpp b/Source/Core/VideoCommon/TextureCacheBase.cpp
+--- a/Source/Core/VideoCommon/TextureCacheBase.cpp
++++ b/Source/Core/VideoCommon/TextureCacheBase.cpp
+@@ -145,6 +145,14 @@
+   m_texture_pool.clear();
+ }
+ 
++bool TextureCacheBase::ChimeraUtilityTextures(bool make)
++{
++  m_efb_encoding_framebuffer.reset();
++  m_efb_encoding_texture.reset();
++  m_decoding_texture.reset();
++  return !make || CreateUtilityTextures();
++}
++
+ void TextureCacheBase::ChimeraDropStagingTextures()
+ {
+   m_efb_copy_staging_texture_pool.clear();
+diff --git a/Source/Core/VideoCommon/TextureCacheBase.h b/Source/Core/VideoCommon/TextureCacheBase.h
+--- a/Source/Core/VideoCommon/TextureCacheBase.h
++++ b/Source/Core/VideoCommon/TextureCacheBase.h
+@@ -289,6 +289,9 @@
+   // refill on demand. (The readback framebuffer itself is remade by the
+   // framebuffer manager.)
+   void ChimeraDropStagingTextures();
++  // the textures this class draws through (EFB encoding, GPU decoding): let
++  // go of, or made again, for a backend whose device is made again after a load
++  bool ChimeraUtilityTextures(bool make);
+ 
+   // chimera (issue 190): what this cache holds that is on the card and in no
+   // savestate - the copies of the EFB and the XFB, and the copies still waiting

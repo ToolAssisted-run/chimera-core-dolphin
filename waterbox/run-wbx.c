@@ -12,6 +12,8 @@
  */
 #include "minibox.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #ifdef CHIMERA_GL_BRIDGE
 #include "gl-bridge.h"
 int chimera_gl_host_init(char *err, int errlen);
@@ -48,6 +50,72 @@ static void gl_report_unhandled(void)
 static void gl_state_loaded(void) { }
 static void gl_report_unhandled(void) { }
 #endif
+
+/* The host half of miniBox's Vulkan bridge (source/vk/vk-host.c), handed to
+ * the core beside the OpenGL one when CHIMERA_GPU asks: the Renderer setting
+ * decides which the core uses ("vulkan-hw"). A load is a new Vulkan device on
+ * this side, as it is in the frontend. */
+#ifdef CHIMERA_VK_BRIDGE
+int chimera_vk_host_init(char *err, int errlen);
+uintptr_t chimera_vk_host_dispatch(uintptr_t op, uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e);
+void chimera_vk_host_state_loaded(void);
+void chimera_vk_host_shutdown(void);
+const char *chimera_vk_host_description(void);
+unsigned long chimera_vk_host_refused(long *last_op);
+static int g_vulkan;
+
+static void vk_state_loaded(void)
+{
+	if (g_vulkan)
+		chimera_vk_host_state_loaded();
+}
+
+/* Names the device the core made, when it made one. A refused command is one
+ * sent with an object the host does not know - of a device a load destroyed,
+ * as a rule. The gate fails on it. */
+static void vk_report(void)
+{
+	long last = 0;
+	if (!g_vulkan) return;
+	const char *card = chimera_vk_host_description();
+	if (card && card[0])
+		fprintf(stderr, "vulkan bridge: %s\n", card);
+	const unsigned long n = chimera_vk_host_refused(&last);
+	if (n)
+		fprintf(stderr, "vulkan bridge: %lu calls were refused (last opcode %ld)\n", n, last);
+	chimera_vk_host_shutdown();
+	fflush(stderr);
+}
+#else
+static void vk_state_loaded(void) { }
+static void vk_report(void) { }
+#endif
+
+/* What the frontend tells a core around a state, when the core has the
+ * exports: before one is taken (what is only on the card is copied into the
+ * machine's memory) and after one is loaded (what the core believes about the
+ * card's objects is no longer so). CHIMERA_NO_STATE_SAVING leaves the first
+ * unsaid, which is the control of the checks that depend on it. */
+typedef void (MB_GUEST_ABI *state_told_fn)(void);
+static state_told_fn g_StateSaving, g_StateLoaded;
+static void state_saving(void)
+{
+	if (g_StateSaving && !getenv("CHIMERA_NO_STATE_SAVING")) g_StateSaving();
+}
+static void state_loaded(void)
+{
+	gl_state_loaded();
+	vk_state_loaded();
+	if (g_StateLoaded) g_StateLoaded();
+}
+/* an export a core may not have: 0 then */
+static uintptr_t proc_optional(mb_host *h, const char *n)
+{
+	mb_return r;
+	memset(&r, 0, sizeof r);
+	wbx_get_proc_addr(h, n, &r);
+	return r.error_message[0] ? 0 : r.data;
+}
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -149,7 +217,7 @@ static void MakeParents(char *path)
 
 int main(int argc, char **argv)
 {
-	const char *core = NULL, *game = NULL, *sysdir = NULL, *ramOut = NULL, *savedataOut = NULL;
+	const char *core = NULL, *game = NULL, *sysdir = NULL, *ramOut = NULL, *savedataOut = NULL, *screenshot = NULL;
 	const char *saves[8]; int nsaves = 0;
 	/* --firmware <id>=<file>: a firmware file, mounted under its id as the
 	 * frontend mounts it (the Triforce's segaboot.gcm) */
@@ -168,6 +236,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--report") && i + 1 < argc) report = atol(argv[++i]);
 		else if (!strcmp(argv[i], "--sys") && i + 1 < argc) sysdir = argv[++i];
 		else if (!strcmp(argv[i], "--ram-out") && i + 1 < argc) ramOut = argv[++i];
+		else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) screenshot = argv[++i];
 		else if (!strcmp(argv[i], "--savedata-out") && i + 1 < argc) savedataOut = argv[++i];
 		else if (!strcmp(argv[i], "--save") && i + 1 < argc && nsaves < 8) saves[nsaves++] = argv[++i];
 		else if (!strcmp(argv[i], "--firmware") && i + 1 < argc && nfirmware < 4) firmware[nfirmware++] = argv[++i];
@@ -288,6 +357,32 @@ int main(int argc, char **argv)
 		}
 	}
 #endif
+#ifdef CHIMERA_VK_BRIDGE
+	{
+		const char *want = getenv("CHIMERA_GPU");
+		if (want && strcmp(want, "0") != 0) {
+			char vkerr[256] = "";
+			setfn_v set_vulkan = (setfn_v)proc_optional(h, "SetVulkanBridge");
+			if (!set_vulkan) {
+				/* a core from before its Vulkan backend */
+			} else if (chimera_vk_host_init(vkerr, sizeof vkerr) != 0) {
+				fprintf(stderr, "vulkan bridge: %s\n", vkerr);
+			} else {
+				mb_return vr;
+				memset(&vr, 0, sizeof vr);
+				wbx_get_callback_addr(h, (mb_external_callback)chimera_vk_host_dispatch, 2, &vr);
+				if (!vr.data) {
+					fprintf(stderr, "vulkan bridge: could not register the callback\n");
+				} else {
+					set_vulkan((uint64_t)vr.data);
+					g_vulkan = 1;
+				}
+			}
+		}
+	}
+#endif
+	g_StateSaving = (state_told_fn)proc_optional(h, "StateSaving");
+	g_StateLoaded = (state_told_fn)proc_optional(h, "StateLoaded");
 
 	intfn Init = (intfn)proc(h, "Init");
 	if (Init() != 1) {
@@ -325,6 +420,7 @@ int main(int argc, char **argv)
 		long half = frames / 2;
 		for (long f = 1; f <= half; f++) FrameAdvance(0);
 		membuf st = {0};
+		state_saving();
 		wbx_save_state(h, mem_write, (uintptr_t)&st, &r);
 		if (r.error_message[0]) { fprintf(stderr, "save: %s\n", r.error_message); return 1; }
 		uint64_t pass1 = 0, pass2 = 0;
@@ -332,12 +428,13 @@ int main(int argc, char **argv)
 		st.pos = 0;
 		wbx_load_state(h, mem_read, (uintptr_t)&st, &r);
 		if (r.error_message[0]) { fprintf(stderr, "load: %s\n", r.error_message); return 1; }
-		gl_state_loaded();
+		state_loaded();
 		for (long f = half + 1; f <= frames; f++) { FrameAdvance(0); pass2 = fnv(pass2, ram, (size_t)ramSize); }
 		printf("rewind: pass1 %016llx pass2 %016llx -> %s\n", (unsigned long long)pass1,
 		       (unsigned long long)pass2, pass1 == pass2 ? "EQUAL" : "DIFFERENT");
 		free(st.b);
 		gl_report_unhandled();
+		vk_report();
 		wbx_deactivate_host(h, &r); wbx_destroy_host(h, &r);
 		return pass1 == pass2 ? 0 : 1;
 	}
@@ -351,12 +448,13 @@ int main(int argc, char **argv)
 		if (rerecord) {
 			/* save+load around every frame; the digests must match a plain run */
 			membuf st = {0};
+			state_saving();
 			wbx_save_state(h, mem_write, (uintptr_t)&st, &r);
 			if (r.error_message[0]) { fprintf(stderr, "save@%ld: %s\n", f, r.error_message); return 1; }
 			st.pos = 0;
 			wbx_load_state(h, mem_read, (uintptr_t)&st, &r);
 			if (r.error_message[0]) { fprintf(stderr, "load@%ld: %s\n", f, r.error_message); return 1; }
-			gl_state_loaded();
+			state_loaded();
 			free(st.b);
 		}
 		FrameAdvance(0);
@@ -371,6 +469,19 @@ int main(int argc, char **argv)
 			       (unsigned long long)fnv(0, aud, (size_t)an * 4), lag);
 			fflush(stdout);
 		}
+	}
+	if (screenshot) {
+		/* the last frame's picture, as an uncompressed 32-bit TGA, top row first */
+		const int vw = GetVideoWidth(), vh = GetVideoHeight();
+		const uint8_t *vid = (const uint8_t *)GetVideoBgra();
+		FILE *sf = fopen(screenshot, "wb");
+		if (sf && vid && vw > 0 && vh > 0) {
+			const uint8_t head[18] = { 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+				(uint8_t)vw, (uint8_t)(vw >> 8), (uint8_t)vh, (uint8_t)(vh >> 8), 32, 0x28 };
+			fwrite(head, 1, sizeof head, sf);
+			fwrite(vid, 4, (size_t)vw * vh, sf);
+		}
+		if (sf) fclose(sf);
 	}
 	if (ramOut) {
 		FILE *rf2 = fopen(ramOut, "wb");
@@ -394,6 +505,7 @@ int main(int argc, char **argv)
 		}
 	}
 	gl_report_unhandled();
+	vk_report();
 	wbx_deactivate_host(h, &r);
 	wbx_destroy_host(h, &r);
 	printf("done\n");

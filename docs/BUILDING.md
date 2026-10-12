@@ -33,7 +33,8 @@ mb="$chimera/extern/chimera-common-minibox"
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
   meson ninja-build build-essential cmake python3 pkg-config \
-  libegl-dev libegl1 libgl1-mesa-dri libegl-mesa0
+  libegl-dev libegl1 libgl1-mesa-dri libegl-mesa0 \
+  libvulkan1 mesa-vulkan-drivers
 ```
 
 **Packages for the frontend gate** (workflow job `frontend-gate`, which also
@@ -51,7 +52,11 @@ sudo apt-get install -y --no-install-recommends \
 **Toolchains.**
 
 - C and C++: the gcc and g++ that `build-essential` installs, and CMake. The
-  workflow pins no compiler or CMake version.
+  workflow pins no compiler or CMake version. GCC 13 and GCC 14 both build
+  it. (The guest toolchain file passes `-DZDICT_QSORT=0` for GCC 14's sake:
+  zstd's dictionary builder, which is never run here, otherwise calls
+  `qsort_r`, which the guest's C library does not have, and GCC 14 refuses an
+  undeclared function where GCC 13 warned.)
 - EGL. The gate's two runners, `run-native` and `run-wbx`, link `-lEGL`: they
   carry the host half of the GPU bridge (`waterbox/gl-host.c`). The Mesa
   packages above give them a GL context on a machine with no GPU; the
@@ -79,6 +84,16 @@ sudo apt-get install -y --no-install-recommends \
   wrappers are generated at build time into `waterbox/generated-gl/` by
   miniBox's `source/gl/gen-gl-bridge.py`, for the entry points listed in
   `waterbox/gl-entry-points.txt`.
+- The `vulkan-hw` renderer is Dolphin's Vulkan backend (`-DENABLE_VULKAN=ON`
+  in `waterbox/configure-flags.sh`), drawing on the host's GPU through
+  Chimera's Vulkan bridge. Its shader compiler (glslang), the Vulkan headers
+  and the memory allocator are Dolphin's own `Externals`. The bridge's two
+  halves are miniBox's (`source/vk`); the wrappers are generated at build
+  time into `waterbox/generated-vk/` by `source/vk/gen-vk-bridge.py`, from the
+  list the frontend's half is generated from. Nothing is needed to build it.
+  A Vulkan driver is looked for when a run starts, and the Vulkan checks say
+  SKIP on a computer without one; `libvulkan1` and `mesa-vulkan-drivers`
+  above give one that draws on the processor (Mesa's lavapipe).
 - miniBox builds the guest C and C++ toolchain from the Chimera submodule.
 
 ## Get the sources
@@ -150,7 +165,7 @@ Only `waterbox/guest-toolchain.cmake` reads it.
 
 ### Patches
 
-`extern/dolphin` is pinned to pristine upstream. The 24 numbered patches in
+`extern/dolphin` is pinned to pristine upstream. The 29 numbered patches in
 `patches/` are applied to it by `waterbox/apply-patches.sh`. There is no
 separate step: `build-native.sh` and `build-guest.sh` both run it first.
 
@@ -312,7 +327,8 @@ Skipped without content or without Chimera:
 | fzero still-screen, fzero trigger | `DOLPHIN_FZERO`, a Triforce image whose game sits on a still screen and reads the analog triggers |
 | mkgp camera, mkgp route | `DOLPHIN_MKGP`, Mario Kart Arcade GP's image, and `DOLPHIN_SEGABOOT`, the Triforce's `segaboot.gcm` |
 | wad | `DOLPHIN_WAD`, a Wii channel `.wad` |
-| gl:rebuild-at-zero | `chimera-run` and the installed package: `<chimera>/build/meson-linux/chimera-run` and `<chimera>/build/Cores/dolphin.chimeraCore` |
+| gl:rebuild-at-zero, gl:picture-after-load, vk:picture-after-load | `chimera-run` and the installed package: `<chimera>/build/meson-linux/chimera-run` and `<chimera>/build/Cores/dolphin.chimeraCore` |
+| vk:bridge, vk:picture, vk:rerecord, vk:rewind, vk:internal-resolution, vk:picture-after-load | a Vulkan driver on this computer (Mesa's lavapipe will do); vk:picture-after-load also needs a Chimera at commit 4ca6e30 or later |
 
 `gl:rebuild-at-zero` looks for Chimera in `$CHIMERA_ROOT`, then `../chimera`,
 then `$HOME/chimera`. CI's `core-gate` job builds neither Chimera nor the
@@ -374,11 +390,14 @@ declarations; this is what they say.
   image under its own name (`MemoryCardA.USA.raw`, `.EUR.` or `.JAP.`); on a
   Wii the `.zip` that Emulator > Export Save Data... writes.
 
-The `renderer` setting has two values. `opengl-hw` (the default) draws on the
+The `renderer` setting has three values. `opengl-hw` (the default) draws on the
 host's GPU through Chimera's GPU bridge; the GPU is outside the sandbox, and a
-movie recorded this way replays only on the same driver. `software` is
-Dolphin's software rasteriser, entirely inside the sandbox and byte-identical
-everywhere. Without a GPU the machine falls back to `software`.
+movie recorded this way replays only on the same driver. `vulkan-hw` is
+Dolphin's Vulkan backend on the host's GPU through Chimera's Vulkan bridge,
+with the same caveat; it needs a Chimera from commit 4ca6e30 on, and refuses
+to start where no Vulkan is handed over. `software` is Dolphin's software
+rasteriser, entirely inside the sandbox and byte-identical everywhere. Without
+a GPU `opengl-hw` falls back to `software`.
 
 ## Troubleshooting
 

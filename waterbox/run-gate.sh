@@ -10,7 +10,7 @@ root="$(cd "$here/.." && pwd)"
 frames="${1:-120}"
 sys="$root/extern/dolphin/Data/Sys"
 swiss="$root/tests/roms/swiss_r2092.dol"
-disc="$root/tests/roms-local/Mortal Kombat - Deadly Alliance.iso"
+disc="${DOLPHIN_DISC:-$root/tests/roms-local/Mortal Kombat - Deadly Alliance.iso}"
 wiidisc="${DOLPHIN_WII_DISC:-$root/tests/roms-local/Dragon Ball Z - Budokai Tenkaichi 3 (USA) (Rev 1).iso}"
 work="$here/tests/work"
 pass=0; fail=0; skip=0
@@ -373,6 +373,117 @@ else
 	SKIP "wad leg (DOLPHIN_WAD not set) - would prove a WiiWare/VC title installs into the RAM NAND and runs"
 fi
 
+# ---- the Vulkan renderer (chimera issue 248) --------------------------------
+#
+# The Renderer setting's "vulkan-hw": Dolphin's Vulkan backend, through
+# miniBox's Vulkan bridge. run-wbx hands both bridges over, as the frontend
+# does, and the core uses the one the setting names. It needs a Vulkan driver
+# on this computer - one that draws on the processor will do (Mesa's lavapipe)
+# - and says SKIP without one.
+#
+# There is no "same machine as the other renderers" check, and there cannot
+# be: a GameCube game copies parts of its picture into its own memory, so the
+# renderer is part of the machine here. What is held instead is that Vulkan
+# draws the picture OpenGL draws, and that a state saved and loaded - which is
+# a new Vulkan device, every time - changes nothing.
+#
+# What these do NOT stand in for: swiss is not a game and lavapipe is not a
+# graphics card. What a game drew on a GTX 1060 is in docs/PLAN.md.
+vkw() { # <name> <run-wbx arguments...>: frames in $work/vk-<name>.txt, the rest in .err
+	vkname="$1"; shift
+	CHIMERA_GPU=1 "$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" "$@" "$swiss" \
+		2> "$work/vk-$vkname.err" | grep '^frame' > "$work/vk-$vkname.txt"
+}
+vk_set='{"renderer":"vulkan-hw"}'
+vkw base --settings "$vk_set" --frames 120 --report 1 --screenshot "$work/vk-120.tga"
+vk_card="$(grep -o 'vulkan bridge: .*(Vulkan [^)]*)' "$work/vk-base.err" | head -1 | cut -c16-)"
+if grep -q 'no Vulkan was handed over' "$work/vk-base.err"; then
+	SKIP "vk legs - this computer handed the core no Vulkan ($(grep -m1 '^vulkan bridge:' "$work/vk-base.err" | cut -c1-100)); would prove Dolphin's Vulkan renderer draws, and comes through a state load"
+else
+	refused="$(grep -c 'calls were refused' "$work/vk-base.err")"
+	if grep -q '^\[driver\] video backend: Vulkan' "$work/vk-base.err" && [ -n "$vk_card" ] &&
+		[ "$refused" -eq 0 ] && [ "$(wc -l < "$work/vk-base.txt")" -eq 120 ]; then
+		PASS "vk:bridge leg - 120 frames of swiss on a Vulkan device ($vk_card), and no command the renderer sent was refused"
+	else
+		FAIL "vk:bridge leg - device [${vk_card:-none made}], runs with refused commands: $refused, frames $(wc -l < "$work/vk-base.txt"): $(grep -v '^\s*$' "$work/vk-base.err" | tail -1 | cut -c1-100)"
+	fi
+
+	# The picture, against OpenGL's on the same computer: the same but for
+	# pixels the two do not round alike. Frame 20 is before swiss has drawn its
+	# menu, and is told apart from frame 120.
+	CHIMERA_GPU=1 "$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" --settings '{"renderer":"opengl-hw"}' \
+		--frames 120 --screenshot "$work/gl-120.tga" "$swiss" > /dev/null 2>&1
+	vkw early --settings "$vk_set" --frames 20 --report 20 --screenshot "$work/vk-20.tga"
+	same="$(python3 "$here/tests/check-same-picture.py" "$work/gl-120.tga" "$work/vk-120.tga" 2>&1)"; same_rc=$?
+	other="$(python3 "$here/tests/check-same-picture.py" "$work/gl-120.tga" "$work/vk-20.tga" 2>&1)"; other_rc=$?
+	if [ "$same_rc" = 0 ] && [ "$other_rc" = 1 ]; then
+		PASS "vk:picture leg - Vulkan draws what OpenGL draws at frame 120: ${same%% (*}; another frame is told apart (${other%% (*})"
+	else
+		FAIL "vk:picture leg - against OpenGL at frame 120: $(printf '%s\n' "$same" | head -1); another frame, which must differ: $(printf '%s\n' "$other" | head -1)"
+	fi
+
+	# A state saved and loaded around every frame. Every load is a new Vulkan
+	# device: the backend lets go of everything it made and makes it again,
+	# and gives the frame being drawn back from the copy the state carried.
+	# The control leaves the core untold before each state (no copy): the
+	# picture is then lost at every load, and with it the machine's memory.
+	vkw rr --settings "$vk_set" --frames 120 --report 1 --rerecord
+	CHIMERA_NO_STATE_SAVING=1 vkw untold --settings "$vk_set" --frames 120 --report 1 --rerecord
+	if [ ! -s "$work/vk-base.txt" ] || ! cmp -s "$work/vk-base.txt" "$work/vk-rr.txt"; then
+		FAIL "vk:rerecord leg - $(diff "$work/vk-base.txt" "$work/vk-rr.txt" | grep -c '^<') of 120 frames differ from the straight run: $(grep -m1 'the guest died\|calls were refused' "$work/vk-rr.err")"
+	elif grep -q 'calls were refused' "$work/vk-rr.err"; then
+		FAIL "vk:rerecord leg - the frames are the straight run's, but $(grep -m1 'calls were refused' "$work/vk-rr.err")"
+	elif cmp -s "$work/vk-base.txt" "$work/vk-untold.txt"; then
+		FAIL "vk:rerecord leg - the control came out right with the core left untold: this program does not show the loss, or the runner told the core anyway"
+	else
+		PASS "vk:rerecord leg - 120 frames with a state saved and loaded around every one are the straight run (memory, picture, sound), no command refused; with the core left untold $(diff "$work/vk-base.txt" "$work/vk-untold.txt" | grep -c '^<') frames are not"
+	fi
+
+	if CHIMERA_GPU=1 "$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" --settings "$vk_set" --frames 60 --rewind "$swiss" 2>/dev/null | grep -q "EQUAL"; then
+		PASS "vk:rewind leg - load of a mid-run state replays identically under Vulkan"
+	else FAIL "vk:rewind leg"; fi
+
+	# Internal resolution: the picture handed over is the card's, twice the
+	# size, and it comes through a load as well.
+	vk_2x='{"renderer":"vulkan-hw","internal_resolution":"2x"}'
+	vkw 2x --settings "$vk_2x" --frames 60 --report 1
+	vkw 2xrr --settings "$vk_2x" --frames 60 --report 1 --rerecord
+	if ! grep -q 'vid 1280x1152' "$work/vk-2x.txt"; then
+		FAIL "vk:internal-resolution leg - 2x did not give a 1280x1152 picture: $(tail -1 "$work/vk-2x.txt" | cut -c1-70)"
+	elif ! cmp -s "$work/vk-2x.txt" "$work/vk-2xrr.txt" || grep -q 'calls were refused' "$work/vk-2xrr.err"; then
+		FAIL "vk:internal-resolution leg - at 2x, $(diff "$work/vk-2x.txt" "$work/vk-2xrr.txt" | grep -c '^<') of 60 frames differ with a state saved and loaded around each $(grep -m1 'calls were refused' "$work/vk-2xrr.err")"
+	else
+		PASS "vk:internal-resolution leg - 2x draws 1280x1152, and 60 frames with a state saved and loaded around every one are the straight run"
+	fi
+
+	# A game's first frame, at 2x. A disc boots through hundreds of fields in
+	# its first frame, each fetching the picture through a buffer made for it
+	# and let go of. Dolphin's Vulkan backend kept every one of them: a buffer
+	# it is to destroy "later" is destroyed when some other command buffer is
+	# waited for, and without a window only the buffer itself ever was
+	# (CommandBufferManager.cpp, patch 0029). Each is mapped, so each was the
+	# core's own memory, and Pro Rally 2002 ran out of it before its first
+	# frame ended - the picture then came back at 1x, from the machine's
+	# memory. swiss does not show it: it draws every field.
+	if [ -f "$disc" ]; then
+		CHIMERA_GPU=1 "$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" --settings "$vk_2x" \
+			--frames 60 --report 60 "$disc" 2> "$work/vk-disc.err" | grep '^frame' > "$work/vk-disc.txt"
+		vk_w="$(sed -n 's/.* vid \([0-9]*\)x.*/\1/p' "$work/vk-disc.txt" | tail -1)"
+		vk_out="$(grep -c 'arena exhausted' "$work/vk-disc.err")"
+		if [ -z "$vk_w" ]; then
+			FAIL "vk:disc-2x leg - the run did not reach frame 60: $(grep -v '^\s*$' "$work/vk-disc.err" | tail -1 | cut -c1-100)"
+		elif [ "$vk_out" -gt 1 ]; then
+			FAIL "vk:disc-2x leg - the core ran out of memory $((vk_out - 1)) times in 60 frames (picture $vk_w wide)"
+		elif [ "$vk_w" -lt 1000 ] || grep -q 'calls were refused' "$work/vk-disc.err"; then
+			FAIL "vk:disc-2x leg - the picture at 2x is $vk_w wide $(grep -m1 'calls were refused' "$work/vk-disc.err")"
+		else
+			PASS "vk:disc-2x leg - 60 frames of a disc at 2x: a picture $vk_w wide, and the buffers each field fetches it through are let go of"
+		fi
+	else
+		SKIP "vk:disc-2x leg (no disc: set DOLPHIN_DISC) - would prove a game's first frame at 2x does not use up the core's memory"
+	fi
+fi
+
 # --- the greenzone's frame-0 anchor rebuilds like any other state (#126) ----
 #
 # On the GPU bridge the OGL backend's objects live in the driver and a savestate
@@ -395,10 +506,11 @@ fi
 # threshold. A restore to frame 0 and a restore to frame 2 must BOTH rebuild -
 # the difference between them was the bug.
 #
-# This is the only leg here that goes through the ENGINE rather than run-wbx,
-# and it has to be: run-wbx's own --rerecord calls wbx_load_state directly, so
-# it never calls StateLoaded and never mints a new context id. It is also the
-# only leg that needs a built and installed package.
+# This leg goes through the ENGINE rather than run-wbx, because it counts the
+# calls the engine's own host half of the bridge traces. (run-wbx's --rerecord
+# tells the core about a load as the engine does since the Vulkan renderer was
+# added; before that it called wbx_load_state and nothing else.) It needs a
+# built and installed package.
 #
 # It holds one more thing since 2026-10-08. The rebuild frees every vertex
 # loader, and the machine's vertex format groups pointed at them: the first
@@ -491,44 +603,53 @@ fi
 # WHAT IT DOES NOT STAND IN FOR: swiss is a homebrew menu and llvmpipe is not
 # a driver. The proof on a film and on a 3D scene, on a real card, is in
 # docs/PLAN.md, with what is still not carried.
-if [ -z "$chimera_root" ]; then
-	SKIP "gl:picture-after-load leg - needs chimera-run and an installed dolphin.chimeraCore (set CHIMERA_ROOT); would prove the frames after a load are the pictures they were"
-else
-	pal="$work/glafterload"
-	mkdir -p "$pal"
-	printf '[Input]\nLogKey:#\n' > "$pal/none.txt"
-	palrun() { # <movie> <out> <internal resolution> <extra args...>
-		palmovie="$1"; palout="$2"; palres="$3"; shift 3
-		CHIMERA_PICTURE_TRACE=1 timeout 600 "$chimera_root/build/meson-linux/chimera-run" \
-			"$chimera_root/build/Cores/dolphin.chimeraCore" "$swiss" "$palmovie" \
-			--settings "{\"renderer\":\"opengl-hw\",\"internal_resolution\":\"$palres\"}" --frames 70 "$@" > "$palout" 2>&1 || true
-	}
-	exact() { grep -c ": 0.00% of pixels differ, 0.00% by more than 8 (largest 0)" "$1"; }
-	landed() { grep -q "pictrace: load, on frame 60:" "$1"; }
-	palrun "$pal/none.txt" "$pal/record.log" 1x --record "$pal/movie.txt"
-	if [ ! -s "$pal/movie.txt" ]; then
-		FAIL "gl:picture-after-load leg - could not record a movie to go back through (see $pal/record.log)"
+# The same check for each renderer that draws on a card (the Vulkan one since
+# chimera issue 248): the same copy, read and given back through Dolphin's own
+# texture interface where the OpenGL backend asks the driver.
+for palrenderer in opengl-hw vulkan-hw; do
+	case "$palrenderer" in opengl-hw) palleg="gl:picture-after-load" ;; *) palleg="vk:picture-after-load" ;; esac
+	if [ -z "$chimera_root" ]; then
+		SKIP "$palleg leg - needs chimera-run and an installed dolphin.chimeraCore (set CHIMERA_ROOT); would prove the frames after a load are the pictures they were"
 	else
-		palprobe="--gpu --greenzone 4096 --greenzone-period 1 --greenzone-max-stride 1 --settle-probe 60,6"
-		for palres in 1x 2x; do
-			palrun "$pal/movie.txt" "$pal/told-$palres.log" "$palres" $palprobe
-			CHIMERA_NO_STATE_SAVING=1 palrun "$pal/movie.txt" "$pal/untold-$palres.log" "$palres" $palprobe
-		done
-		if grep -q "^chimera gl: no context" "$pal/told-1x.log"; then
-			SKIP "gl:picture-after-load leg - this build or this machine gives the bridge no GL context"
-		elif grep -q "^usage: chimera-run" "$pal/told-1x.log"; then
-			SKIP "gl:picture-after-load leg - this chimera-run has no --settle-probe (an older Chimera)"
-		elif ! landed "$pal/told-1x.log" || ! landed "$pal/untold-1x.log" || ! landed "$pal/told-2x.log" || ! landed "$pal/untold-2x.log"; then
-			FAIL "gl:picture-after-load leg - a load did not land on the frame before the ones compared, so nothing was measured (see $pal/told-1x.log)"
-		elif [ "$(exact "$pal/untold-1x.log")" -eq 6 ] || [ "$(exact "$pal/untold-2x.log")" -ge 5 ]; then
-			FAIL "gl:picture-after-load leg - the control drew its frames right with the core left untold ($(exact "$pal/untold-1x.log") of 6 exact at 1x, $(exact "$pal/untold-2x.log") at 2x): this program does not show the loss, or the engine told the core anyway (see $pal/untold-1x.log)"
-		elif [ "$(exact "$pal/told-1x.log")" -ne 6 ] || [ "$(exact "$pal/told-2x.log")" -ne 6 ]; then
-			FAIL "gl:picture-after-load leg - $(exact "$pal/told-1x.log") of 6 frames after a load came back exactly at 1x and $(exact "$pal/told-2x.log") at 2x (see $pal/told-1x.log, $pal/told-2x.log)"
+		pal="$work/afterload-$palrenderer"
+		mkdir -p "$pal"
+		printf '[Input]\nLogKey:#\n' > "$pal/none.txt"
+		palrun() { # <movie> <out> <internal resolution> <extra args...>
+			palmovie="$1"; palout="$2"; palres="$3"; shift 3
+			CHIMERA_PICTURE_TRACE=1 timeout 600 "$chimera_root/build/meson-linux/chimera-run" \
+				"$chimera_root/build/Cores/dolphin.chimeraCore" "$swiss" "$palmovie" \
+				--settings "{\"renderer\":\"$palrenderer\",\"internal_resolution\":\"$palres\"}" --frames 70 "$@" > "$palout" 2>&1 || true
+		}
+		exact() { grep -c ": 0.00% of pixels differ, 0.00% by more than 8 (largest 0)" "$1"; }
+		landed() { grep -q "pictrace: load, on frame 60:" "$1"; }
+		# (on the card as well: asked for Vulkan and handed none, the core refuses to start)
+		palrun "$pal/none.txt" "$pal/record.log" 1x --gpu --record "$pal/movie.txt"
+		if [ ! -s "$pal/movie.txt" ] && grep -q "no Vulkan was handed over" "$pal/record.log"; then
+			SKIP "$palleg leg - this chimera-run handed the core no Vulkan (no Vulkan driver on this computer, or a Chimera from before its Vulkan bridge)"
+		elif [ ! -s "$pal/movie.txt" ]; then
+			FAIL "$palleg leg - could not record a movie to go back through (see $pal/record.log)"
 		else
-			PASS "gl:picture-after-load leg - six frames drawn right after a load are bit for bit the pictures they were, at 1x and at 2x; with the core left untold $(exact "$pal/untold-1x.log") are at 1x and $(exact "$pal/untold-2x.log") at 2x"
+			palprobe="--gpu --greenzone 4096 --greenzone-period 1 --greenzone-max-stride 1 --settle-probe 60,6"
+			for palres in 1x 2x; do
+				palrun "$pal/movie.txt" "$pal/told-$palres.log" "$palres" $palprobe
+				CHIMERA_NO_STATE_SAVING=1 palrun "$pal/movie.txt" "$pal/untold-$palres.log" "$palres" $palprobe
+			done
+			if grep -q "^chimera gl: no context" "$pal/told-1x.log"; then
+				SKIP "$palleg leg - this build or this machine gives the bridge no GL context"
+			elif grep -q "^usage: chimera-run" "$pal/told-1x.log"; then
+				SKIP "$palleg leg - this chimera-run has no --settle-probe (an older Chimera)"
+			elif ! landed "$pal/told-1x.log" || ! landed "$pal/untold-1x.log" || ! landed "$pal/told-2x.log" || ! landed "$pal/untold-2x.log"; then
+				FAIL "$palleg leg - a load did not land on the frame before the ones compared, so nothing was measured (see $pal/told-1x.log)"
+			elif [ "$(exact "$pal/untold-1x.log")" -eq 6 ] || [ "$(exact "$pal/untold-2x.log")" -ge 5 ]; then
+				FAIL "$palleg leg - the control drew its frames right with the core left untold ($(exact "$pal/untold-1x.log") of 6 exact at 1x, $(exact "$pal/untold-2x.log") at 2x): this program does not show the loss, or the engine told the core anyway (see $pal/untold-1x.log)"
+			elif [ "$(exact "$pal/told-1x.log")" -ne 6 ] || [ "$(exact "$pal/told-2x.log")" -ne 6 ]; then
+				FAIL "$palleg leg - $(exact "$pal/told-1x.log") of 6 frames after a load came back exactly at 1x and $(exact "$pal/told-2x.log") at 2x (see $pal/told-1x.log, $pal/told-2x.log)"
+			else
+				PASS "$palleg leg - six frames drawn right after a load are bit for bit the pictures they were, at 1x and at 2x; with the core left untold $(exact "$pal/untold-1x.log") are at 1x and $(exact "$pal/untold-2x.log") at 2x"
+			fi
 		fi
 	fi
-fi
+done
 
 say ""
 say "$pass ok, $fail failed, $skip skipped"
