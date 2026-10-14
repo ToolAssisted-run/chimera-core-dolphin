@@ -38,8 +38,8 @@
    "Right": "L, J1 POV1R, X1 DpadRight",
    "L": "Q, J1 B5, X1 LeftShoulder",
    "R": "W, J1 B7, X1 RightStick",
-   "Coin": "D5, J1 B9, X1 Back",
-   "Service": "D9",
+   "Coin": "Number5, J1 B9, X1 Back",
+   "Service": "Number9",
    "Test": "F2"
   }
  },
