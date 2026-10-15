@@ -96,6 +96,10 @@ int main(int argc, char** argv)
   const char* savedata_out = nullptr;
   struct { long first, count; int index; } press[32];
   int presses = 0;
+  // --axis I:V holds axis I at V, as the frontend sends its axes every frame
+  struct { int index, value; } axis[16];
+  int naxes = 0;
+  bool wii = false;
   for (int i = 1; i < argc; i++)
   {
     if (!strcmp(argv[i], "--frames") && i + 1 < argc)
@@ -113,7 +117,30 @@ int main(int argc, char** argv)
     else if (!strcmp(argv[i], "--cpu-core") && i + 1 < argc)
       chimera_dolphin_set_cpu_core(argv[++i]);
     else if (!strcmp(argv[i], "--machine") && i + 1 < argc)
+    {
+      wii = strcmp(argv[i + 1], "wii") == 0;
       chimera_dolphin_set_machine(argv[++i]);
+    }
+    // what a port holds, as the port settings say: --port 1=wii-remote-nunchuk
+    else if (!strcmp(argv[i], "--port") && i + 1 < argc)
+    {
+      const char* spec = argv[++i];
+      if (spec[0] < '1' || spec[0] > '4' || spec[1] != '=' || !chimera_dolphin_set_port_device(spec[0] - '1', spec + 2))
+      {
+        fprintf(stderr, "--port wants <1-4>=<device>, not %s\n", spec);
+        return 2;
+      }
+    }
+    else if (!strcmp(argv[i], "--axis") && i + 1 < argc && naxes < 16)
+    {
+      int a, v;
+      if (sscanf(argv[++i], "%d:%d", &a, &v) == 2)
+      {
+        axis[naxes].index = a;
+        axis[naxes].value = v;
+        naxes++;
+      }
+    }
     else if (!strcmp(argv[i], "--ports") && i + 1 < argc)
     {
       const char* mask = argv[++i]; // e.g. "1010": port1 and port3
@@ -218,13 +245,40 @@ int main(int argc, char** argv)
       // the wire order of the panel, as the sandbox's entry point reads it:
       // twelve buttons, then a Triforce cabinet's Coin, Service and Test
       const bool held = f >= press[pi].first && f < press[pi].first + press[pi].count;
+      // a Wii project's wire, as the sandbox's entry point reads it: 21
+      // buttons a port, then the console's own
+      if (wii)
+      {
+        const int port = press[pi].index / 21, b = press[pi].index % 21;
+        if (press[pi].index >= 84)
+          chimera_dolphin_set_console(press[pi].index - 84, held);
+        else
+        {
+          if (b < 12)
+            chimera_dolphin_set_button(port, b, held);
+          chimera_dolphin_set_wii_button(port, b, held);
+        }
+      }
       // after the four pads (48), the console's Previous Disc, Next Disc, Disc Swap
-      if (press[pi].index >= 48)
+      else if (press[pi].index >= 48)
         chimera_dolphin_set_console(press[pi].index - 48, held);
       else if (press[pi].index < 12)
         chimera_dolphin_set_button(0, press[pi].index, held);
       else
         chimera_dolphin_set_switch(0, 14 - press[pi].index, held);
+    }
+    for (int ai = 0; ai < naxes; ai++)
+    {
+      const int index = axis[ai].index, value = axis[ai].value;
+      if (wii)
+      {
+        const int port = index / 10, a = index % 10;
+        if (a < 6)
+          chimera_dolphin_set_axis(port, a, a >= 4 ? value : value + 128);
+        chimera_dolphin_set_wii_axis(port, a, value);
+      }
+      else
+        chimera_dolphin_set_axis(index / 6, index % 6, index % 6 >= 4 ? value : value + 128);
     }
     chimera_dolphin_frame();
     if (!chimera_dolphin_input_was_read())

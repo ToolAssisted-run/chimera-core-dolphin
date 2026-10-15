@@ -682,3 +682,42 @@ change, the same natively, in the sandbox and with a state around every
 frame; a second file that is no disc gives a third one. No game on two
 discs was played, and Dolphin's own automatic change of disc (when a game
 stops the drive) is not used.
+
+## The Wii's controllers (2026-10-15, chimera#285)
+
+The owner decided which Wii controllers a project can use (user-decided,
+2026-10-15): a port holds a Wii Remote, a Wii Remote with a Nunchuk, or a
+Wii Remote with a Classic Controller, as well as a GameCube controller or
+nothing; with buttons, sticks, the pointer as a pair of axes, and shake and
+tilt as simple controls; no free motion and no MotionPlus.
+
+- **One wire for every device.** On a Wii a port is the GameCube
+  controller's twelve buttons and six axes, then 1, 2, Plus, Minus, Home,
+  Shake, C, ZL and ZR, and Pointer X and Y, Tilt X and Y - 21 buttons and
+  10 axes, and a name means the same on each device: A is the Wii Remote's
+  A, the Classic's a or the GameCube's A, the main stick is the Nunchuk's
+  or the Classic's left stick. The Wii machine's controller is called "Wii
+  Controllers" now; a movie made before names the same twelve buttons and
+  six axes, and reads the new columns as released. A GameCube project
+  keeps its own layout. Which columns a port has follows its device.
+- **How the values reach Dolphin.** Each Wii port has an emulated Wii
+  Remote whose extension is set from the port setting, and the movie is its
+  input through the input override Dolphin's own TAS input uses. Buttons,
+  sticks, triggers and the pointer already honoured it; tilt and shake did
+  not, so patch 0030 lets them (their state is read through the override,
+  as a stick's is). Pointer X and Y are -32768 to 32767 across the screen
+  and down it, so the mouse drives them out of the box; Shake shakes along
+  all three axes at once; Tilt X is right and Tilt Y forward.
+- With a Classic Controller the port's buttons are the Classic's, and the
+  Wii Remote's own are not driven. A GameCube game refuses a Wii
+  controller. A Wii Remote is polled 200 times a second whether the game
+  reads it or not, so a frame with a Wii Remote in port 1 is never counted
+  as lag.
+
+Measured on Mortal Kombat: Armageddon (the one Wii disc here), 600 frames:
+a Wii Remote, one with a Nunchuk and one with a Classic Controller are each
+another machine than a GameCube controller; A, the Nunchuk's C and stick,
+the Classic's a, the pointer, Shake and the tilt each change the machine;
+native and sandbox agree, and a state saved and loaded around every frame
+changes nothing. Not tried: playing a game that needs the pointer or a
+gesture, the Classic's analog triggers, and more than one Wii Remote.

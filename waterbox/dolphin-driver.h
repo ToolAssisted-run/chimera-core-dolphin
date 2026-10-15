@@ -47,6 +47,18 @@ void chimera_dolphin_set_wii_savedata(const char* zip_path);
 void chimera_dolphin_set_sega_boot(const char* path);
 void chimera_dolphin_set_cpu_core(const char* name);
 void chimera_dolphin_set_port(int port, int present);
+// What a port holds (chimera#285): "none", "gc-controller", "wii-remote",
+// "wii-remote-nunchuk" or "classic-controller"; 0 for another name. Before
+// chimera_dolphin_init.
+int chimera_dolphin_set_port_device(int port, const char* name);
+// 0 none, 1 GameCube controller, 2 Wii Remote, 3 with a Nunchuk, 4 Classic
+int chimera_dolphin_port_device(int port);
+// A Wii port's wire (waterbox.config's Wii machine): the GameCube controller's
+// twelve buttons, then 1, 2, Plus, Minus, Home, Shake, C, ZL, ZR; its six axes,
+// then Pointer X and Y (-32768..32767 across the screen, down positive) and
+// Tilt X and Y (-128..127, right and forward positive). Values as declared.
+void chimera_dolphin_set_wii_button(int port, int index, int state);
+void chimera_dolphin_set_wii_axis(int port, int index, int value);
 // The project's discs after the first, in the Game slot's order, before
 // chimera_dolphin_init (chimera#286); and how many discs there are in all.
 void chimera_dolphin_add_disc(const char* path);

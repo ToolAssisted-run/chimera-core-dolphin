@@ -292,6 +292,57 @@ PYZIP
 		elif ! diff -r "$work/sdn" "$work/sdw" >/dev/null; then FAIL "wii save round-trip leg - native and sandbox export different files"
 		else PASS "wii save round-trip leg - seeded into NAND, exported back byte for byte, native == sandbox"; fi
 	fi
+
+	# The Wii's controllers (chimera#285). A port holds a GameCube controller
+	# or a Wii Remote - alone, with a Nunchuk or with a Classic Controller -
+	# and the Wii's wire is 21 buttons a port: the GameCube's twelve, then
+	# 1, 2, Plus, Minus, Home, Shake, C, ZL, ZR (12 to 20); A is 0 on all of
+	# them. Each device is another machine than the GameCube controller, and
+	# a press on each reaches the game, the same natively and in the sandbox;
+	# a state around every frame changes nothing with a Wii Remote; and a
+	# GameCube game refuses a Wii controller.
+	presses="--press 300:5:IDX --press 400:5:IDX --press 500:5:IDX"
+	wiictl() { # <name> <device> <button index or -> : native, sandbox, rerecorded
+		p=""; [ "$3" = "-" ] || p="$(printf '%s' "$presses" | sed "s/IDX/$3/g")"
+		nat "$1" --frames 600 --report 600 --machine wii --port "1=$2" $p "$wiidisc" > "$work/$1.txt"
+		wbx --frames 600 --report 600 --settings "{\"machine\":\"wii\",\"port1\":\"$2\"}" $p "$wiidisc" > "$work/$1g.txt"
+	}
+	nat wgc --frames 600 --report 600 --machine wii "$wiidisc" > "$work/wgc.txt"
+	wiictl wr0 wii-remote -
+	wiictl wra wii-remote 0
+	wbx --frames 600 --report 600 --rerecord --settings '{"machine":"wii","port1":"wii-remote"}' $(printf '%s' "$presses" | sed "s/IDX/0/g") "$wiidisc" > "$work/wrar.txt"
+	wiictl wn0 wii-remote-nunchuk -
+	wiictl wnc wii-remote-nunchuk 18
+	wiictl wc0 classic-controller -
+	wiictl wca classic-controller 0
+	# the pointer (axes 6 and 7), Shake (button 17) and the tilt (axis 8)
+	nat wrp --frames 600 --report 600 --machine wii --port 1=wii-remote --axis 6:20000 --axis 7:-15000 "$wiidisc" > "$work/wrp.txt"
+	wbx --frames 600 --report 600 --settings '{"machine":"wii","port1":"wii-remote"}' --axis 6:20000 --axis 7:-15000 "$wiidisc" > "$work/wrpg.txt"
+	nat wrs --frames 600 --report 600 --machine wii --port 1=wii-remote --press 300:30:17 "$wiidisc" > "$work/wrs.txt"
+	nat wrt --frames 600 --report 600 --machine wii --port 1=wii-remote --axis 8:100 "$wiidisc" > "$work/wrt.txt"
+	why=""
+	for t in wrp wrs wrt; do
+		cmp -s "$work/wr0.txt" "$work/$t.txt" && why="$why $t: the Wii Remote's pointer, Shake or tilt changed nothing;"
+	done
+	cmp -s "$work/wrp.txt" "$work/wrpg.txt" || why="$why wrp: native and sandbox differ;"
+	for t in wr0 wra wn0 wnc wc0 wca; do
+		[ -s "$work/$t.txt" ] || why="$why $t: no frames;"
+		cmp -s "$work/$t.txt" "$work/${t}g.txt" || why="$why $t: native and sandbox differ;"
+	done
+	cmp -s "$work/wgc.txt" "$work/wr0.txt" && why="$why a Wii Remote is the GameCube controller's machine;"
+	cmp -s "$work/wr0.txt" "$work/wra.txt" && why="$why the Wii Remote's A changed nothing;"
+	cmp -s "$work/wr0.txt" "$work/wn0.txt" && why="$why the Nunchuk changed nothing;"
+	cmp -s "$work/wn0.txt" "$work/wnc.txt" && why="$why the Nunchuk's C changed nothing;"
+	cmp -s "$work/wr0.txt" "$work/wc0.txt" && why="$why the Classic Controller changed nothing;"
+	cmp -s "$work/wc0.txt" "$work/wca.txt" && why="$why the Classic Controller's a changed nothing;"
+	cmp -s "$work/wrag.txt" "$work/wrar.txt" || why="$why a state around every frame changed a Wii Remote run;"
+	gcref="$("$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" --frames 1 --settings '{"port1":"wii-remote"}' "$swiss" 2>&1 | grep -o 'has a Wii controller, and this is a GameCube game')"
+	[ -n "$gcref" ] || why="$why a GameCube game took a Wii Remote;"
+	if [ -z "$why" ]; then
+		PASS "wii controllers leg - a Wii Remote, one with a Nunchuk and one with a Classic Controller are each another machine, and A, C and a, the pointer, Shake and the tilt reach the game, native == sandbox; a state around every frame changes nothing; a GameCube game refuses a Wii Remote"
+	else
+		FAIL "wii controllers leg -$why"
+	fi
 else
 	SKIP "wii legs (no Wii disc in tests/roms-local) - would prove IOS HLE + the in-memory NAND across flavors"
 fi

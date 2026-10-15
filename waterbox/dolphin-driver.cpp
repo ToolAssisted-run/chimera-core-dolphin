@@ -45,6 +45,13 @@
 #include "AudioCommon/Mixer.h"
 #include "AudioCommon/SoundStream.h"
 #include "Core/HW/VideoInterface.h"
+#include "Core/Config/WiimoteSettings.h"
+#include "Core/HW/Wiimote.h"
+#include "Core/HW/WiimoteEmu/Extension/Classic.h"
+#include "Core/HW/WiimoteEmu/Extension/Nunchuk.h"
+#include "Core/HW/WiimoteEmu/WiimoteEmu.h"
+#include "InputCommon/ControllerEmu/ControlGroup/Attachments.h"
+#include "InputCommon/InputConfig.h"
 #include "InputCommon/GCPadStatus.h"
 #include "Core/Config/GraphicsSettings.h"
 #include "VideoCommon/VideoBackendBase.h"
@@ -129,6 +136,55 @@ static bool OnACard()
   return s_gl_backend || s_vk_backend;
 }
 static bool s_port_present[4] = {true, false, false, false};
+
+// ---- the Wii's controllers (chimera#285) -------------------------------------
+//
+// What each port holds. A GameCube has its own controller or nothing; a Wii
+// has that, or a Wii Remote alone, with a Nunchuk, or with a Classic
+// Controller. A port is one player's controller, so it is one setting and one
+// wire whatever is plugged in: on a Wii the wire is the GameCube controller's
+// twelve buttons and six axes, then what only the Wii's controllers have, and
+// a name means the same on each (A is the Wii Remote's A, the Classic's a or
+// the GameCube's A, the main stick is the Nunchuk's or the Classic's left).
+// The values reach Dolphin's emulated Wii Remote and its extension through
+// their input override, the way Dolphin's own TAS input reaches them, read
+// whenever the emulated controller is updated.
+enum class PortDevice : uint8_t
+{
+  None,
+  GameCube,
+  WiiRemote,
+  WiiRemoteNunchuk,
+  Classic,
+};
+static PortDevice s_port_device[4] = {PortDevice::GameCube, PortDevice::None, PortDevice::None,
+                                      PortDevice::None};
+static bool IsWiiDevice(PortDevice d)
+{
+  return d == PortDevice::WiiRemote || d == PortDevice::WiiRemoteNunchuk || d == PortDevice::Classic;
+}
+enum WiiButton
+{
+  WB_A, WB_B, WB_X, WB_Y, WB_Z, WB_START, WB_UP, WB_DOWN, WB_LEFT, WB_RIGHT, WB_L, WB_R,
+  WB_1, WB_2, WB_PLUS, WB_MINUS, WB_HOME, WB_SHAKE, WB_C, WB_ZL, WB_ZR,
+  WB_COUNT
+};
+enum WiiAxis
+{
+  WA_MAIN_X, WA_MAIN_Y, WA_C_X, WA_C_Y, WA_TRIGGER_L, WA_TRIGGER_R,
+  WA_POINT_X, WA_POINT_Y, WA_TILT_X, WA_TILT_Y,
+  WA_COUNT
+};
+struct WiiWire
+{
+  uint8_t button[WB_COUNT];
+  int32_t axis[WA_COUNT];  // as the package declares them
+};
+static WiiWire s_wii[4];
+// defined with the adapter's C surface, further down
+extern "C" {
+static void SetUpWiiControllers();
+}
 // The emulation options a project may pin (chimera#149), as the project gave
 // them; kUnset = not given, dolphin's own default stands. Every declared
 // default IS dolphin's default, so a project made before these existed is the
@@ -418,6 +474,13 @@ public:
     layer->Set(Config::MAIN_AUDIO_BACKEND, std::string(BACKEND_NULLSOUND));
     layer->Set(Config::MAIN_EMULATION_SPEED, 0.0f);
     layer->Set(Config::MAIN_WIIMOTE_CONTINUOUS_SCANNING, false);
+    // a port with a Wii controller has an emulated Wii Remote in its slot,
+    // driven by the movie (SetUpWiiControllers); the others have none, and
+    // the balance board slot is empty
+    for (int i = 0; i < 4; i++)
+      layer->Set(Config::GetInfoForWiimoteSource(i),
+                 IsWiiDevice(s_port_device[i]) ? WiimoteSource::Emulated : WiimoteSource::None);
+    layer->Set(Config::GetInfoForWiimoteSource(4), WiimoteSource::None);
     // what is plugged into each controller port is part of the machine
     for (int ch = 0; ch < 4; ch++)
     {
@@ -775,6 +838,7 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
   WindowSystemInfo wsi;
   wsi.type = WindowSystemType::Headless;
   UICommon::InitControllers(wsi);
+  SetUpWiiControllers();
 
   auto boot = BootParameters::GenerateFromFile(game_path);
   if (!boot)
@@ -826,6 +890,20 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
       return RefuseRunningMachine();
     }
   }
+  // A Wii Remote is a Wii's: a GameCube game has nowhere to plug one in.
+  for (int i = 0; i < 4; i++)
+  {
+    if (IsWiiDevice(s_port_device[i]) && !Sys().IsWii())
+    {
+      s_error = "port " + std::to_string(i + 1) +
+                " has a Wii controller, and this is a GameCube game: a GameCube has only GameCube "
+                "controllers";
+      return RefuseRunningMachine();
+    }
+  }
+  // the boot read the controllers' settings again: the Wii Remotes' extensions
+  // and their input are set once more, before anything runs
+  SetUpWiiControllers();
   // the saves the project starts from, before the machine is sealed
   if (!SeedWiiSaves())
     return RefuseRunningMachine();
@@ -1263,7 +1341,212 @@ void chimera_dolphin_set_memcard_a(int present)
 void chimera_dolphin_set_port(int port, int present)
 {
   if (port >= 0 && port < 4)
+  {
     s_port_present[port] = present != 0;
+    s_port_device[port] = present ? PortDevice::GameCube : PortDevice::None;
+  }
+}
+
+int chimera_dolphin_set_port_device(int port, const char* name)
+{
+  if (port < 0 || port >= 4 || !name)
+    return 0;
+  static const struct
+  {
+    const char* name;
+    PortDevice device;
+  } kDevices[] = {
+      {"none", PortDevice::None},
+      {"gc-controller", PortDevice::GameCube},
+      {"wii-remote", PortDevice::WiiRemote},
+      {"wii-remote-nunchuk", PortDevice::WiiRemoteNunchuk},
+      {"classic-controller", PortDevice::Classic},
+  };
+  for (const auto& d : kDevices)
+  {
+    if (strcmp(name, d.name) == 0)
+    {
+      s_port_device[port] = d.device;
+      s_port_present[port] = d.device == PortDevice::GameCube;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+int chimera_dolphin_port_device(int port)
+{
+  return port >= 0 && port < 4 ? int(s_port_device[port]) : 0;
+}
+
+void chimera_dolphin_set_wii_button(int port, int index, int state)
+{
+  if (port >= 0 && port < 4 && index >= 0 && index < WB_COUNT)
+    s_wii[port].button[index] = state ? 1 : 0;
+}
+
+void chimera_dolphin_set_wii_axis(int port, int index, int value)
+{
+  if (port >= 0 && port < 4 && index >= 0 && index < WA_COUNT)
+    s_wii[port].axis[index] = value;
+}
+
+// -1..1 from a declared axis whose ends are -max and max
+static ControlState Unit(int32_t value, int32_t max)
+{
+  const ControlState v = ControlState(value) / max;
+  return v < -1 ? -1 : (v > 1 ? 1 : v);
+}
+
+// What the movie says of one of a Wii Remote's controls; nothing for a control
+// it has no column for (the motion sensors, the speaker), which then reads
+// as a Wii Remote lying still. Pointer Y is down the screen in the movie, as a
+// mouse is, and up in Dolphin's pointer.
+static std::optional<ControlState> RemoteOverride(int port, std::string_view group,
+                                                  std::string_view control)
+{
+  const WiiWire& w = s_wii[port];
+  const auto button = [&](int i) -> std::optional<ControlState> { return w.button[i] ? 1.0 : 0.0; };
+  if (group == WiimoteEmu::Wiimote::BUTTONS_GROUP)
+  {
+    if (port == 0)
+      s_input_read = true;
+    if (control == WiimoteEmu::Wiimote::A_BUTTON) return button(WB_A);
+    if (control == WiimoteEmu::Wiimote::B_BUTTON) return button(WB_B);
+    if (control == WiimoteEmu::Wiimote::ONE_BUTTON) return button(WB_1);
+    if (control == WiimoteEmu::Wiimote::TWO_BUTTON) return button(WB_2);
+    if (control == WiimoteEmu::Wiimote::PLUS_BUTTON) return button(WB_PLUS);
+    if (control == WiimoteEmu::Wiimote::MINUS_BUTTON) return button(WB_MINUS);
+    if (control == WiimoteEmu::Wiimote::HOME_BUTTON) return button(WB_HOME);
+  }
+  else if (group == WiimoteEmu::Wiimote::DPAD_GROUP)
+  {
+    if (control == DIRECTION_UP) return button(WB_UP);
+    if (control == DIRECTION_DOWN) return button(WB_DOWN);
+    if (control == DIRECTION_LEFT) return button(WB_LEFT);
+    if (control == DIRECTION_RIGHT) return button(WB_RIGHT);
+  }
+  else if (group == WiimoteEmu::Wiimote::IR_GROUP)
+  {
+    if (control == ControllerEmu::ReshapableInput::X_INPUT_OVERRIDE) return Unit(w.axis[WA_POINT_X], 32767);
+    if (control == ControllerEmu::ReshapableInput::Y_INPUT_OVERRIDE) return -Unit(w.axis[WA_POINT_Y], 32767);
+  }
+  else if (group == "Shake")
+  {
+    // one button shakes it every way at once, which is what a game that
+    // asks for a shake looks for
+    return button(WB_SHAKE);
+  }
+  else if (group == "Tilt")
+  {
+    if (control == ControllerEmu::ReshapableInput::X_INPUT_OVERRIDE) return Unit(w.axis[WA_TILT_X], 127);
+    if (control == ControllerEmu::ReshapableInput::Y_INPUT_OVERRIDE) return Unit(w.axis[WA_TILT_Y], 127);
+  }
+  return std::nullopt;
+}
+
+static std::optional<ControlState> NunchukOverride(int port, std::string_view group,
+                                                   std::string_view control)
+{
+  const WiiWire& w = s_wii[port];
+  if (group == WiimoteEmu::Nunchuk::BUTTONS_GROUP)
+  {
+    if (control == WiimoteEmu::Nunchuk::C_BUTTON) return w.button[WB_C] ? 1.0 : 0.0;
+    if (control == WiimoteEmu::Nunchuk::Z_BUTTON) return w.button[WB_Z] ? 1.0 : 0.0;
+  }
+  else if (group == WiimoteEmu::Nunchuk::STICK_GROUP)
+  {
+    if (control == ControllerEmu::ReshapableInput::X_INPUT_OVERRIDE) return Unit(w.axis[WA_MAIN_X], 127);
+    if (control == ControllerEmu::ReshapableInput::Y_INPUT_OVERRIDE) return Unit(w.axis[WA_MAIN_Y], 127);
+  }
+  return std::nullopt;
+}
+
+static std::optional<ControlState> ClassicOverride(int port, std::string_view group,
+                                                   std::string_view control)
+{
+  const WiiWire& w = s_wii[port];
+  const auto button = [&](int i) -> std::optional<ControlState> { return w.button[i] ? 1.0 : 0.0; };
+  using WiimoteEmu::Classic;
+  if (group == Classic::BUTTONS_GROUP)
+  {
+    if (port == 0)
+      s_input_read = true;
+    if (control == Classic::A_BUTTON) return button(WB_A);
+    if (control == Classic::B_BUTTON) return button(WB_B);
+    if (control == Classic::X_BUTTON) return button(WB_X);
+    if (control == Classic::Y_BUTTON) return button(WB_Y);
+    if (control == Classic::ZL_BUTTON) return button(WB_ZL);
+    if (control == Classic::ZR_BUTTON) return button(WB_ZR);
+    if (control == Classic::PLUS_BUTTON) return button(WB_PLUS);
+    if (control == Classic::MINUS_BUTTON) return button(WB_MINUS);
+    if (control == Classic::HOME_BUTTON) return button(WB_HOME);
+  }
+  else if (group == Classic::TRIGGERS_GROUP)
+  {
+    // the digital click is at the bottom of the travel, as on the GameCube's
+    if (control == Classic::L_DIGITAL) return button(WB_L);
+    if (control == Classic::R_DIGITAL) return button(WB_R);
+    if (control == Classic::L_ANALOG) return w.button[WB_L] ? 1.0 : Unit(w.axis[WA_TRIGGER_L], 255);
+    if (control == Classic::R_ANALOG) return w.button[WB_R] ? 1.0 : Unit(w.axis[WA_TRIGGER_R], 255);
+  }
+  else if (group == Classic::DPAD_GROUP)
+  {
+    if (control == DIRECTION_UP) return button(WB_UP);
+    if (control == DIRECTION_DOWN) return button(WB_DOWN);
+    if (control == DIRECTION_LEFT) return button(WB_LEFT);
+    if (control == DIRECTION_RIGHT) return button(WB_RIGHT);
+  }
+  else if (group == Classic::LEFT_STICK_GROUP)
+  {
+    if (control == ControllerEmu::ReshapableInput::X_INPUT_OVERRIDE) return Unit(w.axis[WA_MAIN_X], 127);
+    if (control == ControllerEmu::ReshapableInput::Y_INPUT_OVERRIDE) return Unit(w.axis[WA_MAIN_Y], 127);
+  }
+  else if (group == Classic::RIGHT_STICK_GROUP)
+  {
+    if (control == ControllerEmu::ReshapableInput::X_INPUT_OVERRIDE) return Unit(w.axis[WA_C_X], 127);
+    if (control == ControllerEmu::ReshapableInput::Y_INPUT_OVERRIDE) return Unit(w.axis[WA_C_Y], 127);
+  }
+  return std::nullopt;
+}
+
+// Each Wii port's Wii Remote: its extension, and the movie as its input. With
+// a Classic Controller the Wii Remote's own buttons are not driven: the port's
+// A, B, the d-pad and the rest are the Classic's.
+static void SetUpWiiControllers()
+{
+  for (int i = 0; i < 4; i++)
+  {
+    if (!IsWiiDevice(s_port_device[i]))
+      continue;
+    auto* const remote = static_cast<WiimoteEmu::Wiimote*>(Wiimote::GetConfig()->GetController(i));
+    auto* const attachments = static_cast<ControllerEmu::Attachments*>(
+        remote->GetWiimoteGroup(WiimoteEmu::WiimoteGroup::Attachments));
+    const WiimoteEmu::ExtensionNumber extension =
+        s_port_device[i] == PortDevice::WiiRemoteNunchuk ? WiimoteEmu::ExtensionNumber::NUNCHUK :
+        s_port_device[i] == PortDevice::Classic          ? WiimoteEmu::ExtensionNumber::CLASSIC :
+                                                           WiimoteEmu::ExtensionNumber::NONE;
+    attachments->SetSelectedAttachment(extension);
+    remote->GetMotionPlusSetting().SetValue(false);
+    if (s_port_device[i] == PortDevice::Classic)
+      remote->SetInputOverrideFunction(
+          [](std::string_view, std::string_view, ControlState) -> std::optional<ControlState> {
+            return std::nullopt;
+          });
+    else
+      remote->SetInputOverrideFunction([i](std::string_view g, std::string_view c, ControlState) {
+        return RemoteOverride(i, g, c);
+      });
+    auto* const attached = attachments->GetAttachmentList()[extension].get();
+    if (extension == WiimoteEmu::ExtensionNumber::NUNCHUK)
+      attached->SetInputOverrideFunction([i](std::string_view g, std::string_view c, ControlState) {
+        return NunchukOverride(i, g, c);
+      });
+    else if (extension == WiimoteEmu::ExtensionNumber::CLASSIC)
+      attached->SetInputOverrideFunction([i](std::string_view g, std::string_view c, ControlState) {
+        return ClassicOverride(i, g, c);
+      });
+  }
 }
 
 int chimera_dolphin_port_present(int port)

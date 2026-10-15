@@ -33,6 +33,9 @@ ECL_EXPORT const char* GetLoadError(void)
   return g_loadError;
 }
 
+// a Wii project, whose wire is the Wii's (see kWiiButtons below)
+static bool g_wii;
+
 ECL_EXPORT int Init(void)
 {
   g_loadError[0] = '\0';
@@ -76,6 +79,7 @@ ECL_EXPORT int Init(void)
   char machine[16] = "";
   wbx_setting_str("machine", machine, sizeof machine);
   chimera_dolphin_set_machine(machine);
+  g_wii = strcmp(machine, "wii") == 0;
   chimera_dolphin_set_memcard_a(wbx_setting_bool("memcard_a", 1));
   chimera_dolphin_set_widescreen(wbx_setting_bool("widescreen", 0));
   // The Triforce's firmware is mounted under its id when the project asked
@@ -140,7 +144,11 @@ ECL_EXPORT int Init(void)
     snprintf(key, sizeof key, "port%d", i + 1);
     snprintf(val, sizeof val, "%s", i == 0 ? "gc-controller" : "none");
     wbx_setting_str(key, val, sizeof val);
-    chimera_dolphin_set_port(i, strcmp(val, "gc-controller") == 0);
+    if (!chimera_dolphin_set_port_device(i, val))
+    {
+      snprintf(g_loadError, sizeof g_loadError, "setting %s: unknown value '%s'", key, val);
+      return 0;
+    }
   }
 
   // Where the OGL backend copies the frame it is drawing before a state is
@@ -178,6 +186,47 @@ ECL_EXPORT int Init(void)
   return 1;
 }
 
+// A Wii project's wire (waterbox.config's Wii machine, chimera#285): a port
+// is the GameCube controller's twelve buttons and six axes, then what only
+// the Wii's controllers have - 1, 2, Plus, Minus, Home, Shake, C, ZL, ZR, and
+// Pointer X and Y, Tilt X and Y. A GameCube project keeps its twelve and six.
+static const int kWiiButtons = 21, kWiiAxes = 10;
+
+// Which of a Wii port's controls the device plugged in has (the order of
+// dolphin-driver.cpp's WiiButton and WiiAxis).
+static bool WiiButtonLive(int device, int b)
+{
+  switch (device)
+  {
+  case 1:  // a GameCube controller
+    return b < 12;
+  case 2:  // a Wii Remote: A, B, the d-pad, 1, 2, Plus, Minus, Home, Shake
+  case 3:  // ...and a Nunchuk's C and Z
+    return b == 0 || b == 1 || (b >= 6 && b <= 9) || (b >= 12 && b <= 17) ||
+           (device == 3 && (b == 4 || b == 18));
+  case 4:  // a Classic Controller: a, b, x, y, the d-pad, L, R, Plus, Minus, Home, ZL, ZR
+    return b <= 3 || (b >= 6 && b <= 11) || (b >= 14 && b <= 16) || b == 19 || b == 20;
+  default:
+    return false;
+  }
+}
+
+static bool WiiAxisLive(int device, int a)
+{
+  switch (device)
+  {
+  case 1:  // the GameCube controller's sticks and triggers
+  case 4:  // the Classic's sticks and analog triggers
+    return a < 6;
+  case 2:  // the pointer and the tilt
+    return a >= 6;
+  case 3:  // ...and the Nunchuk's stick
+    return a >= 6 || a <= 1;
+  default:
+    return false;
+  }
+}
+
 // Which of the declared controls this machine has: a control belongs to a
 // port, and an empty port has none of them.
 // A Triforce cabinet declares its own panel: two players of a GameCube pad's
@@ -191,10 +240,14 @@ ECL_EXPORT int IsButtonActive(int32_t index)
     return index >= 0 && index < 2 * kTriforceButtons;
   // after the pads the console's own controls: the selector when there is
   // more than one disc to choose from, the lid when there is a disc at all
-  if (index == 48 || index == 49)
+  const int pads = 4 * (g_wii ? kWiiButtons : 12);
+  if (index == pads || index == pads + 1)
     return chimera_dolphin_disc_count() > 1;
-  if (index == 50)
+  if (index == pads + 2)
     return chimera_dolphin_disc_count() > 0;
+  if (g_wii)
+    return index >= 0 && index < pads &&
+           WiiButtonLive(chimera_dolphin_port_device(index / kWiiButtons), index % kWiiButtons);
   return index >= 0 && index < 48 && chimera_dolphin_port_present(index / 12);
 }
 
@@ -202,6 +255,9 @@ ECL_EXPORT int IsAxisActive(int32_t index)
 {
   if (chimera_dolphin_triforce())
     return index >= 0 && index < 12;
+  if (g_wii)
+    return index >= 0 && index < 4 * kWiiAxes &&
+           WiiAxisLive(chimera_dolphin_port_device(index / kWiiAxes), index % kWiiAxes);
   return index >= 0 && index < 24 && chimera_dolphin_port_present(index / 6);
 }
 
@@ -217,6 +273,20 @@ ECL_EXPORT void SetButton(int32_t index, int32_t state)
       chimera_dolphin_set_switch(pad, 14 - wire, state);
     return;
   }
+  if (g_wii)
+  {
+    const int port = index / kWiiButtons, b = index % kWiiButtons;
+    if (index >= 4 * kWiiButtons)
+      chimera_dolphin_set_console(index - 4 * kWiiButtons, state);
+    else
+    {
+      // a GameCube controller on the port reads the first twelve as its own
+      if (b < 12)
+        chimera_dolphin_set_button(port, b, state);
+      chimera_dolphin_set_wii_button(port, b, state);
+    }
+    return;
+  }
   if (index >= 48)
     chimera_dolphin_set_console(index - 48, state);
   else
@@ -230,6 +300,14 @@ ECL_EXPORT void SetAxis(int32_t index, int32_t value)
   // passes as it is. Biased too, a released trigger read half pressed - 128 of
   // travel on every frame the frontend sent its axes, which it always does
   // (chimera#157: F-Zero AX's gas and brake stood at 127 before a key was touched).
+  if (g_wii)
+  {
+    const int port = index / kWiiAxes, a = index % kWiiAxes;
+    if (a < 6)
+      chimera_dolphin_set_axis(port, a, a >= 4 ? value : value + 128);
+    chimera_dolphin_set_wii_axis(port, a, value);
+    return;
+  }
   const int axis = index % 6;
   chimera_dolphin_set_axis(index / 6, axis, axis >= 4 ? value : value + 128);
 }

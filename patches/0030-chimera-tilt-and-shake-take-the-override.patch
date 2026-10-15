@@ -1,0 +1,156 @@
+diff --git a/Source/Core/Core/HW/WiimoteEmu/Dynamics.cpp b/Source/Core/Core/HW/WiimoteEmu/Dynamics.cpp
+index ebf24f7..511bb3e 100644
+--- a/Source/Core/Core/HW/WiimoteEmu/Dynamics.cpp
++++ b/Source/Core/Core/HW/WiimoteEmu/Dynamics.cpp
+@@ -82,7 +82,14 @@ Common::Quaternion ComplementaryFilter(const Common::Quaternion& gyroscope,
+ void EmulateShake(PositionalState* state, ControllerEmu::Shake* const shake_group,
+                   float time_elapsed)
+ {
+-  auto target_position = shake_group->GetState() * float(shake_group->GetIntensity() / 2);
++  EmulateShake(state, shake_group, {}, time_elapsed);
++}
++
++void EmulateShake(PositionalState* state, ControllerEmu::Shake* const shake_group,
++                  const ControllerEmu::InputOverrideFunction& override_func, float time_elapsed)
++{
++  auto target_position =
++      shake_group->GetState(true, override_func) * float(shake_group->GetIntensity() / 2);
+   for (std::size_t i = 0; i != target_position.data.size(); ++i)
+   {
+     if (state->velocity.data[i] * std::copysign(1.f, target_position.data[i]) < 0 ||
+@@ -109,7 +116,13 @@ void EmulateShake(PositionalState* state, ControllerEmu::Shake* const shake_grou
+ 
+ void EmulateTilt(RotationalState* state, ControllerEmu::Tilt* const tilt_group, float time_elapsed)
+ {
+-  const auto target = tilt_group->GetState();
++  EmulateTilt(state, tilt_group, {}, time_elapsed);
++}
++
++void EmulateTilt(RotationalState* state, ControllerEmu::Tilt* const tilt_group,
++                 const ControllerEmu::InputOverrideFunction& override_func, float time_elapsed)
++{
++  const auto target = tilt_group->GetState(override_func);
+ 
+   // 180 degrees is currently the max tilt value.
+   const ControlState roll = target.x * MathUtil::PI;
+diff --git a/Source/Core/Core/HW/WiimoteEmu/Dynamics.h b/Source/Core/Core/HW/WiimoteEmu/Dynamics.h
+index 8f35c30..c17f6c1 100644
+--- a/Source/Core/Core/HW/WiimoteEmu/Dynamics.h
++++ b/Source/Core/Core/HW/WiimoteEmu/Dynamics.h
+@@ -77,6 +77,12 @@ void ApproachAngleWithAccel(RotationalState* state, const Common::Vec3& target,
+ 
+ void EmulateShake(PositionalState* state, ControllerEmu::Shake* shake_group, float time_elapsed);
+ void EmulateTilt(RotationalState* state, ControllerEmu::Tilt* tilt_group, float time_elapsed);
++// chimera: the same, with what an input override says (Dolphin's TAS input
++// and a frontend's movie reach tilt and shake as they reach the buttons)
++void EmulateShake(PositionalState* state, ControllerEmu::Shake* shake_group,
++                  const ControllerEmu::InputOverrideFunction& override_func, float time_elapsed);
++void EmulateTilt(RotationalState* state, ControllerEmu::Tilt* tilt_group,
++                 const ControllerEmu::InputOverrideFunction& override_func, float time_elapsed);
+ void EmulateSwing(MotionState* state, ControllerEmu::Force* swing_group, float time_elapsed);
+ void EmulatePoint(MotionState* state, ControllerEmu::Cursor* ir_group,
+                   const ControllerEmu::InputOverrideFunction& override_func, float time_elapsed);
+diff --git a/Source/Core/Core/HW/WiimoteEmu/Extension/Nunchuk.cpp b/Source/Core/Core/HW/WiimoteEmu/Extension/Nunchuk.cpp
+index 6745602..be75dfa 100644
+--- a/Source/Core/Core/HW/WiimoteEmu/Extension/Nunchuk.cpp
++++ b/Source/Core/Core/HW/WiimoteEmu/Extension/Nunchuk.cpp
+@@ -76,8 +76,8 @@ void Nunchuk::BuildDesiredExtensionState(DesiredExtensionState* target_state)
+ 
+   // Acceleration data:
+   EmulateSwing(&m_swing_state, m_swing, 1.f / ::Wiimote::UPDATE_FREQ);
+-  EmulateTilt(&m_tilt_state, m_tilt, 1.f / ::Wiimote::UPDATE_FREQ);
+-  EmulateShake(&m_shake_state, m_shake, 1.f / ::Wiimote::UPDATE_FREQ);
++  EmulateTilt(&m_tilt_state, m_tilt, m_input_override_function, 1.f / ::Wiimote::UPDATE_FREQ);
++  EmulateShake(&m_shake_state, m_shake, m_input_override_function, 1.f / ::Wiimote::UPDATE_FREQ);
+ 
+   const auto transformation =
+       GetRotationalMatrix(-m_tilt_state.angle) * GetRotationalMatrix(-m_swing_state.angle);
+diff --git a/Source/Core/Core/HW/WiimoteEmu/WiimoteEmu.cpp b/Source/Core/Core/HW/WiimoteEmu/WiimoteEmu.cpp
+index bbbea66..3bb2733 100644
+--- a/Source/Core/Core/HW/WiimoteEmu/WiimoteEmu.cpp
++++ b/Source/Core/Core/HW/WiimoteEmu/WiimoteEmu.cpp
+@@ -835,9 +835,9 @@ void Wiimote::RefreshConfig()
+ void Wiimote::StepDynamics()
+ {
+   EmulateSwing(&m_swing_state, m_swing, 1.f / ::Wiimote::UPDATE_FREQ);
+-  EmulateTilt(&m_tilt_state, m_tilt, 1.f / ::Wiimote::UPDATE_FREQ);
++  EmulateTilt(&m_tilt_state, m_tilt, m_input_override_function, 1.f / ::Wiimote::UPDATE_FREQ);
+   EmulatePoint(&m_point_state, m_ir, m_input_override_function, 1.f / ::Wiimote::UPDATE_FREQ);
+-  EmulateShake(&m_shake_state, m_shake, 1.f / ::Wiimote::UPDATE_FREQ);
++  EmulateShake(&m_shake_state, m_shake, m_input_override_function, 1.f / ::Wiimote::UPDATE_FREQ);
+   EmulateIMUCursor(&m_imu_cursor_state, m_imu_ir, m_imu_accelerometer, m_imu_gyroscope,
+                    1.f / ::Wiimote::UPDATE_FREQ);
+ }
+diff --git a/Source/Core/InputCommon/ControllerEmu/ControlGroup/Force.cpp b/Source/Core/InputCommon/ControllerEmu/ControlGroup/Force.cpp
+index d74c4df..32395d7 100644
+--- a/Source/Core/InputCommon/ControllerEmu/ControlGroup/Force.cpp
++++ b/Source/Core/InputCommon/ControllerEmu/ControlGroup/Force.cpp
+@@ -170,6 +170,19 @@ Shake::StateData Shake::GetState(bool adjusted) const
+   return result;
+ }
+ 
++Shake::StateData Shake::GetState(bool adjusted, const InputOverrideFunction& override_func) const
++{
++  StateData result = GetState(adjusted);
++  if (!override_func)
++    return result;
++  for (std::size_t i = 0; i != result.data.size(); ++i)
++  {
++    if (const std::optional<ControlState> v = override_func(name, controls[i]->name, result.data[i]))
++      result.data[i] = *v;
++  }
++  return result;
++}
++
+ ControlState Shake::GetDeadzone() const
+ {
+   return m_deadzone_setting.GetValue() / 100;
+diff --git a/Source/Core/InputCommon/ControllerEmu/ControlGroup/Force.h b/Source/Core/InputCommon/ControllerEmu/ControlGroup/Force.h
+index abe02a4..30781aa 100644
+--- a/Source/Core/InputCommon/ControllerEmu/ControlGroup/Force.h
++++ b/Source/Core/InputCommon/ControllerEmu/ControlGroup/Force.h
+@@ -50,6 +50,8 @@ public:
+   explicit Shake(const std::string& name, ControlState default_intensity_scale = 1);
+ 
+   StateData GetState(bool adjusted = true) const;
++  // chimera: what an input override says of each of X, Y and Z wins
++  StateData GetState(bool adjusted, const InputOverrideFunction& override_func) const;
+ 
+   ControlState GetDeadzone() const;
+ 
+diff --git a/Source/Core/InputCommon/ControllerEmu/ControlGroup/Tilt.cpp b/Source/Core/InputCommon/ControllerEmu/ControlGroup/Tilt.cpp
+index 5c604ef..a167ae2 100644
+--- a/Source/Core/InputCommon/ControllerEmu/ControlGroup/Tilt.cpp
++++ b/Source/Core/InputCommon/ControllerEmu/ControlGroup/Tilt.cpp
+@@ -56,6 +56,18 @@ Tilt::StateData Tilt::GetState() const
+   return GetReshapableState(true);
+ }
+ 
++Tilt::StateData Tilt::GetState(const InputOverrideFunction& override_func) const
++{
++  StateData state = GetState();
++  if (!override_func)
++    return state;
++  if (const std::optional<ControlState> x = override_func(name, X_INPUT_OVERRIDE, state.x))
++    state.x = *x;
++  if (const std::optional<ControlState> y = override_func(name, Y_INPUT_OVERRIDE, state.y))
++    state.y = *y;
++  return state;
++}
++
+ ControlState Tilt::GetGateRadiusAtAngle(double ang) const
+ {
+   const ControlState max_tilt_angle = m_max_angle_setting.GetValue() / 180;
+diff --git a/Source/Core/InputCommon/ControllerEmu/ControlGroup/Tilt.h b/Source/Core/InputCommon/ControllerEmu/ControlGroup/Tilt.h
+index 69cfd7d..cbe25dc 100644
+--- a/Source/Core/InputCommon/ControllerEmu/ControlGroup/Tilt.h
++++ b/Source/Core/InputCommon/ControllerEmu/ControlGroup/Tilt.h
+@@ -26,6 +26,8 @@ public:
+   ControlState GetDefaultInputRadiusAtAngle(double angle) const final;
+ 
+   StateData GetState() const;
++  // chimera: what an input override says of X and Y wins, as for a stick
++  StateData GetState(const InputOverrideFunction& override_func) const;
+ 
+   // Return peak rotational velocity (for a complete turn) in radians/sec
+   ControlState GetMaxRotationalVelocity() const;
