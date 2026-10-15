@@ -161,6 +161,15 @@ ECL_EXPORT int Init(void)
       chimera_dolphin_efb_blocks(block, kEfbBlock, scratch, kEfbScratch);
   }
 
+  // A game on several discs: the Game slot's later files, in order, are the
+  // discs the lid can be closed on (chimera#286)
+  for (int i = 1; i < wbx_slot_count("game"); i++)
+  {
+    char disc[256];
+    if (wbx_slot_name("game", i, disc, sizeof disc))
+      chimera_dolphin_add_disc(disc);
+  }
+
   if (!chimera_dolphin_init("/user", "/sys", romName))
   {
     snprintf(g_loadError, sizeof g_loadError, "%s", chimera_dolphin_error());
@@ -180,6 +189,12 @@ ECL_EXPORT int IsButtonActive(int32_t index)
 {
   if (chimera_dolphin_triforce())
     return index >= 0 && index < 2 * kTriforceButtons;
+  // after the pads the console's own controls: the selector when there is
+  // more than one disc to choose from, the lid when there is a disc at all
+  if (index == 48 || index == 49)
+    return chimera_dolphin_disc_count() > 1;
+  if (index == 50)
+    return chimera_dolphin_disc_count() > 0;
   return index >= 0 && index < 48 && chimera_dolphin_port_present(index / 12);
 }
 
@@ -202,7 +217,10 @@ ECL_EXPORT void SetButton(int32_t index, int32_t state)
       chimera_dolphin_set_switch(pad, 14 - wire, state);
     return;
   }
-  chimera_dolphin_set_button(index / 12, index % 12, state);
+  if (index >= 48)
+    chimera_dolphin_set_console(index - 48, state);
+  else
+    chimera_dolphin_set_button(index / 12, index % 12, state);
 }
 
 ECL_EXPORT void SetAxis(int32_t index, int32_t value)

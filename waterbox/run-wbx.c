@@ -231,6 +231,9 @@ int main(int argc, char **argv)
 	 * its axes: every one, every frame */
 	struct { int index, value; } axis[16];
 	int naxes = 0;
+	/* --disc FILE: the game's next disc, as a project's Game slot lists it */
+	const char *discs[7];
+	int ndiscs = 0;
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = atol(argv[++i]);
 		else if (!strcmp(argv[i], "--report") && i + 1 < argc) report = atol(argv[++i]);
@@ -243,6 +246,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--settings") && i + 1 < argc) settingsJson = argv[++i];
 		else if (!strcmp(argv[i], "--rewind")) rewind = 1;
 		else if (!strcmp(argv[i], "--rerecord")) rerecord = 1;
+		else if (!strcmp(argv[i], "--disc") && i + 1 < argc && ndiscs < 7) discs[ndiscs++] = argv[++i];
 		else if (!strcmp(argv[i], "--press") && i + 1 < argc && presses < 32) {
 			long a, b; int c;
 			if (sscanf(argv[++i], "%ld:%ld:%d", &a, &b, &c) == 3) {
@@ -315,9 +319,26 @@ int main(int argc, char **argv)
 			snprintf(slotsJson + used, sizeof slotsJson - used, "%s\"%.*s\"", i ? "," : "", (int)(eq - saves[i]), saves[i]);
 		}
 	}
-	strncat(slotsJson, "]}", sizeof slotsJson - strlen(slotsJson) - 1);
+	strncat(slotsJson, "]", sizeof slotsJson - strlen(slotsJson) - 1);
+	/* a game on several discs: every disc mounted under its own name, and the
+	 * Game slot naming them in order, the first the one booted */
+	if (ndiscs > 0) {
+		size_t used = strlen(slotsJson);
+		snprintf(slotsJson + used, sizeof slotsJson - used, ",\"game\":[\"%s\"", vfsname);
+		for (int i = 0; i < ndiscs; i++) {
+			const char *db = strrchr(discs[i], '/');
+			char dn[512];
+			snprintf(dn, sizeof dn, "/%s", db ? db + 1 : discs[i]);
+			wbx_mount_file_path(h, dn, discs[i], &r);
+			if (r.error_message[0]) { fprintf(stderr, "mount %s: %s\n", dn, r.error_message); return 1; }
+			used = strlen(slotsJson);
+			snprintf(slotsJson + used, sizeof slotsJson - used, ",\"%s\"", dn);
+		}
+		strncat(slotsJson, "]", sizeof slotsJson - strlen(slotsJson) - 1);
+	}
+	strncat(slotsJson, "}", sizeof slotsJson - strlen(slotsJson) - 1);
 	memreader slotsReader = { (const uint8_t *)slotsJson, strlen(slotsJson), 0 };
-	if (nsaves > 0) {
+	if (nsaves > 0 || ndiscs > 0) {
 		wbx_mount_file(h, "slots", mem_reader, (uintptr_t)&slotsReader, false, &r);
 		if (r.error_message[0]) { fprintf(stderr, "mount slots: %s\n", r.error_message); return 1; }
 	}

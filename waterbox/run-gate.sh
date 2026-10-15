@@ -202,6 +202,35 @@ else
 	SKIP "disc leg (no commercial disc in tests/roms-local) - would prove DiscIO+DVD timing equivalence on a real game"
 fi
 
+# ---- tier 2a: a game on several discs (chimera#286) -------------------------
+# The Game slot takes up to eight discs; Previous Disc, Next Disc and Disc
+# Swap (buttons 48, 49 and 50, after the four pads) are the selector and the
+# lid. No game on two discs is here, so the commercial disc is both discs:
+# the lid held up from frame 200 to 260 and closed on the second (the
+# selector untouched) must change the run - the game sees its cover open -
+# the same natively and in the sandbox, and a state saved and loaded around
+# every frame must change nothing. A second disc that is no disc at all must
+# leave the lid up, which is another run again: the file the selector names
+# is the one opened.
+if [ -f "$disc" ]; then
+	printf 'not a disc' > "$work/not-a-disc.iso"
+	# the second disc under a name of its own, as two files in a project are
+	ln -sf "$(cd "$(dirname "$disc")" && pwd)/$(basename "$disc")" "$work/second-disc.iso"
+	nat ds0 --frames 400 --report 400 "$disc" > "$work/ds0.txt"
+	nat ds1 --frames 400 --report 400 --disc "$work/second-disc.iso" --press 200:60:50 "$disc" > "$work/ds1.txt"
+	wbx --frames 400 --report 400 --disc "$work/second-disc.iso" --press 200:60:50 "$disc" > "$work/dsg.txt"
+	wbx --frames 400 --report 400 --disc "$work/second-disc.iso" --press 200:60:50 --rerecord "$disc" > "$work/dsr.txt"
+	wbx --frames 400 --report 400 --disc "$work/not-a-disc.iso" --press 200:60:50 "$disc" > "$work/dsn.txt"
+	if [ ! -s "$work/ds0.txt" ] || [ ! -s "$work/ds1.txt" ]; then FAIL "discs leg - a run produced no frames"
+	elif cmp -s "$work/ds0.txt" "$work/ds1.txt"; then FAIL "discs leg - the lid opened and closed and the machine did not notice"
+	elif ! cmp -s "$work/ds1.txt" "$work/dsg.txt"; then FAIL "discs leg - native and sandbox differ with a disc change"
+	elif ! cmp -s "$work/dsg.txt" "$work/dsr.txt"; then FAIL "discs leg - a state around every frame changed a run with a disc change"
+	elif [ ! -s "$work/dsn.txt" ] || cmp -s "$work/dsn.txt" "$work/dsg.txt"; then FAIL "discs leg - closing on a file that is no disc was the same as closing on the disc"
+	else PASS "discs leg - Disc Swap held for 60 frames changes the run, native == sandbox == a state around every frame; a second disc that is no disc leaves the lid up"; fi
+else
+	SKIP "discs leg (no commercial disc in tests/roms-local, or DOLPHIN_DISC) - would prove the lid and the selector reach the drive"
+fi
+
 # ---- tier 2b: a Wii disc ---------------------------------------------------
 # The other machine this core is: IOS HLE, the NAND in guest memory, the
 # disc decrypted with dolphin's own keys. The rerecord leg doubles as proof

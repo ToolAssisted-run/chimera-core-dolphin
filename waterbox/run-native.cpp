@@ -167,6 +167,9 @@ int main(int argc, char** argv)
       }
 #endif
     }
+    // the game's next disc, as a project's Game slot lists it
+    else if (!strcmp(argv[i], "--disc") && i + 1 < argc)
+      chimera_dolphin_add_disc(argv[++i]);
     else if (!strcmp(argv[i], "--press") && i + 1 < argc && presses < 32)
     {
       long a, b;
@@ -215,7 +218,10 @@ int main(int argc, char** argv)
       // the wire order of the panel, as the sandbox's entry point reads it:
       // twelve buttons, then a Triforce cabinet's Coin, Service and Test
       const bool held = f >= press[pi].first && f < press[pi].first + press[pi].count;
-      if (press[pi].index < 12)
+      // after the four pads (48), the console's Previous Disc, Next Disc, Disc Swap
+      if (press[pi].index >= 48)
+        chimera_dolphin_set_console(press[pi].index - 48, held);
+      else if (press[pi].index < 12)
         chimera_dolphin_set_button(0, press[pi].index, held);
       else
         chimera_dolphin_set_switch(0, 14 - press[pi].index, held);

@@ -63,7 +63,10 @@
    "P4 Left": "J4 POV1L, X4 DpadLeft",
    "P4 Right": "J4 POV1R, X4 DpadRight",
    "P4 L": "J4 B5, X4 LeftShoulder",
-   "P4 R": "J4 B7, X4 RightStick"
+   "P4 R": "J4 B7, X4 RightStick",
+   "Previous Disc": "LeftBracket",
+   "Next Disc": "RightBracket",
+   "Disc Swap": "Backslash"
   },
   "Triforce Panel": {
    "P1 A": "Z, J1 B2, X1 A",

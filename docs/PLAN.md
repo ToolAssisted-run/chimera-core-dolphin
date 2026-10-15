@@ -652,3 +652,33 @@ another name never fired, so those controls shipped unbound on the keyboard.
 Checked on Xvfb: with 1, Return, left Shift and Up held, Chimera reports
 Number1, Enter, Shift and Up. Left and right names stay beside the merged one,
 for a setup with the merging off.
+
+## A game on several discs (2026-10-15, chimera#286)
+
+The owner decided that a Dolphin project takes several discs, with the
+controls the other cores with discs have (user-decided, 2026-10-15). The
+Game slot takes up to eight files; the first is the one booted. After the
+four pads, the GameCube and the Wii have three more controls: Previous Disc
+and Next Disc move a selector over the project's discs and touch nothing,
+and Disc Swap is the lid, up for as long as it is held and closing on the
+selected disc, or on the next one when the selector was not moved. It is
+DuckStation's design (its `machine-console.inc`), the same everywhere a
+movie changes discs.
+
+Up, the driver asks Dolphin's drive to eject (`EjectDisc`, as its own
+"Eject Disc" does); released, it opens the selected file and puts it in
+(`SetDisc`, which Dolphin's own change of disc ends with). A file that is no
+disc leaves the lid up and says so. The selector, the lid and which disc is
+in live in the driver's memory, so a savestate carries them. The selector
+is a control only when the project has more than one disc, and the lid only
+when it booted a disc (not a .dol, .elf or .wad): a project with one disc
+gets one more column in its movie, Disc Swap, and a movie made before
+reads it as released. Their keys out of the box are [ and ] for the
+selector and \ for the lid, which nothing else in Chimera uses.
+
+Measured on Pro Rally 2002, the one GameCube disc here, as both discs: the
+lid up from frame 200 to 260 gives another machine at frame 400 than no
+change, the same natively, in the sandbox and with a state around every
+frame; a second file that is no disc gives a third one. No game on two
+discs was played, and Dolphin's own automatic change of disc (when a game
+stops the drive) is not used.

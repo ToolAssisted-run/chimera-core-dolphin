@@ -322,7 +322,8 @@ Skipped without content or without Chimera:
 
 | Legs | Needs |
 | --- | --- |
-| disc | a GameCube disc image at the path the `disc=` line at the top of `run-gate.sh` names, under `tests/roms-local/` |
+| disc | a GameCube disc image at the path the `disc=` line at the top of `run-gate.sh` names, under `tests/roms-local/`, or `DOLPHIN_DISC` |
+| discs | the same disc: Disc Swap held for 60 frames, closing on the project's second disc (the same image under another name), changes the run, the same natively, in the sandbox and with a state around every frame; a second "disc" that is no disc leaves the lid up (chimera#286) |
 | wii disc, wii rerecord, machine, widescreen, wii save refusal, wii save round-trip | a Wii disc image: `DOLPHIN_WII_DISC`, or the path the `wiidisc=` line names |
 | triforce, triforce rerecord, triforce coin, triforce machine | `DOLPHIN_TRIFORCE`, a Triforce image |
 | fzero still-screen, fzero trigger | `DOLPHIN_FZERO`, a Triforce image whose game sits on a still screen and reads the analog triggers |

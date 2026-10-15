@@ -47,6 +47,13 @@ void chimera_dolphin_set_wii_savedata(const char* zip_path);
 void chimera_dolphin_set_sega_boot(const char* path);
 void chimera_dolphin_set_cpu_core(const char* name);
 void chimera_dolphin_set_port(int port, int present);
+// The project's discs after the first, in the Game slot's order, before
+// chimera_dolphin_init (chimera#286); and how many discs there are in all.
+void chimera_dolphin_add_disc(const char* path);
+int chimera_dolphin_disc_count(void);
+// The console's own controls after the pads: 0 Previous Disc, 1 Next Disc,
+// 2 Disc Swap (the lid, up while held).
+void chimera_dolphin_set_console(int index, int state);
 int chimera_dolphin_port_present(int port);
 void chimera_dolphin_set_renderer(const char* name);
 const char* chimera_dolphin_renderer_refusal(void);

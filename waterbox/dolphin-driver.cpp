@@ -14,6 +14,7 @@
 #include <cstring>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 #include <thread>
 #include <array>
@@ -32,6 +33,9 @@
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/HW/DSP.h"
+#include "Core/HW/DVD/DVDInterface.h"
+#include "DiscIO/Volume.h"
+#include "DiscIO/VolumeDisc.h"
 #include "Core/HW/EXI/EXI_Device.h"
 #include "Core/HW/Memmap.h"
 #include "Core/HW/SI/SI_Device.h"
@@ -74,6 +78,23 @@ struct PadWire
   uint8_t switches = 0;
 };
 static PadWire s_pad[4];
+
+// ---- the discs (chimera#286) ------------------------------------------------
+//
+// Every disc the project put in its Game slot, in the slot's order, which is
+// the order the selector steps through - the controls the other cores with
+// discs have (DuckStation's machine-console.inc is the model). All of it is
+// the machine's: which disc is in, which one the selector is on, whether the
+// lid is up. It lives in the driver's memory, so a state carries it and a
+// movie that changes discs replays the change.
+static constexpr int kMaxDiscs = 8;
+static char s_discs[kMaxDiscs][512];
+static int s_disc_count;
+static int s_disc_inserted;   // -1 while the lid is up
+static int s_disc_was_inserted;
+static int s_disc_selected;
+static bool s_lid_up;
+static uint8_t s_console[3], s_console_was[3];
 static bool s_input_read;
 static bool s_memcard_a = true;
 // The Wii's "Screen: Widescreen" system setting, which a Wii game reads from
@@ -761,6 +782,21 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
     s_error = "could not make boot parameters from the given path";
     return 0;
   }
+  // A disc image boots from the drive: it is the first of the project's
+  // discs, the one in when the machine is switched on. A program (.dol,
+  // .elf, .wad) is no disc, and the lid stays shut on an empty drive.
+  if (std::holds_alternative<BootParameters::Disc>(boot->parameters))
+  {
+    if (s_disc_count == kMaxDiscs)
+      s_disc_count--;
+    memmove(s_discs[1], s_discs[0], sizeof s_discs[0] * s_disc_count);
+    snprintf(s_discs[0], sizeof s_discs[0], "%s", game_path);
+    s_disc_count++;
+  }
+  else
+  {
+    s_disc_count = 0;
+  }
   // BootManager owns the whole boot ritual (config game layers, SYSCONF
   // control transfer, determinism update) - bypassing it for Core::Init left
   // the shutdown transfer asserting.
@@ -854,8 +890,81 @@ void chimera_dolphin_efb_blocks(void* block, size_t block_bytes, void* scratch,
 }
 
 extern "C" void chimera_dolphin_vk_frame_start(void) __attribute__((weak));
+
+void chimera_dolphin_add_disc(const char* path)
+{
+  // the first is the one the machine boots, which chimera_dolphin_init adds
+  if (s_disc_count < kMaxDiscs && path && path[0])
+    snprintf(s_discs[s_disc_count++], sizeof s_discs[0], "%s", path);
+}
+
+int chimera_dolphin_disc_count(void)
+{
+  return s_disc_count;
+}
+
+void chimera_dolphin_set_console(int index, int state)
+{
+  if (index >= 0 && index < 3)
+    s_console[index] = state ? 1 : 0;
+}
+
+// Before the frame runs, on the machine's own side of it.
+static void DiscControls(const Core::CPUThreadGuard& guard)
+{
+  const bool prev = s_console[0] && !s_console_was[0];
+  const bool next = s_console[1] && !s_console_was[1];
+  memcpy(s_console_was, s_console, sizeof s_console);
+  // PREVIOUS and NEXT are a selector: they choose, and touch no hardware.
+  // They wrap both ways.
+  if (s_disc_count > 1)
+  {
+    if (prev)
+      s_disc_selected = (s_disc_selected + s_disc_count - 1) % s_disc_count;
+    if (next)
+      s_disc_selected = (s_disc_selected + 1) % s_disc_count;
+  }
+  // DISC SWAP is the lid. Held, it is up: the drive reports the cover open
+  // and no disc, which is what a game asking for its other disc waits to
+  // see. Released, the SELECTED disc is in. How long it stays up is how long
+  // the button is held - the player's decision, and the movie's. With the
+  // selector untouched the lid closes on the next disc, so the button alone
+  // steps through them.
+  const bool up = s_console[2] != 0;
+  if (up == s_lid_up || s_disc_count == 0)
+    return;
+  auto& dvd = Sys().GetDVDInterface();
+  s_lid_up = up;
+  if (up)
+  {
+    dvd.EjectDisc(guard, DVD::EjectCause::User);
+    s_disc_inserted = -1;
+    return;
+  }
+  if (s_disc_count > 1 && s_disc_selected == s_disc_was_inserted)
+    s_disc_selected = (s_disc_was_inserted + 1) % s_disc_count;
+  std::unique_ptr<DiscIO::VolumeDisc> disc = DiscIO::CreateDiscForCore(s_discs[s_disc_selected]);
+  if (!disc)
+  {
+    // the lid stays up on an empty tray: a drive that believes it holds a
+    // disc it cannot read is worse than one that knows it is empty
+    s_lid_up = true;
+    fprintf(stderr, "[driver] disc %d (%s) will not open; the lid stays up\n", s_disc_selected + 1,
+            s_discs[s_disc_selected]);
+    return;
+  }
+  dvd.SetDisc(std::move(disc), {});
+  s_disc_inserted = s_disc_selected;
+  s_disc_was_inserted = s_disc_selected;
+}
+
 void chimera_dolphin_frame(void)
 {
+  if (s_disc_count > 0 && !Triforce())
+  {
+    const Core::CPUThreadGuard guard(Sys());
+    DiscControls(guard);
+  }
   // chimera: before the machine steps, give the OGL backend the chance to
   // notice its GL context has moved (a savestate loaded into this session) and
   // rebuild - here nothing is mid-draw. Only when the OGL BACKEND is the one
