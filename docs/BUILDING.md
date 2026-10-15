@@ -305,6 +305,7 @@ committed as `tests/roms/swiss_r2092.dol`. So tier 1 runs from a fresh clone:
 
 | Legs | What they hold |
 | --- | --- |
+| check-keybinds | every default binding names a control the package declares (`P1 A`, not `A`), and every axis is bound (chimera#284); needs nothing built |
 | native deterministic | two native runs agree |
 | native == sandbox | RAM, video, audio and lag digests are identical in the sandbox |
 | rewind, rerecord | a state loaded mid-run replays identically; save and load around every frame changes nothing |
