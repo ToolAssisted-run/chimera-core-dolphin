@@ -47,6 +47,16 @@ bridge_answered() {
 
 rm -rf "$work"; mkdir -p "$work"
 
+# ---- default bindings -----------------------------------------------------
+# chimera#284: every default binding was named without its port ("A", "Main
+# Stick X") while the controls are "P1 A", "P1 Main Stick X"; the frontend
+# matches by exact name, so none applied. Needs nothing built.
+if out="$(python3 "$here/check-keybinds.py" "$here/default_keybinds.json" "$here/waterbox.config" 2>&1)"; then
+	PASS "$out"
+else
+	FAIL "$out"
+fi
+
 [ -x "$here/obj-native/run-native" ] || { say "run-native missing - make -f native.mk"; exit 2; }
 [ -x "$here/bin/run-wbx" ] || { say "run-wbx missing - ./build-core.sh"; exit 2; }
 

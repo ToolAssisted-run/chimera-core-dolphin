@@ -1,46 +1,101 @@
 {
  "_comment": [
-  "Default bindings for the GameCube Controller this package declares. The frontend",
-  "ships no bindings of its own - a package that declares a controller says how it is",
-  "played by default, and the user's own bindings always win.",
+  "Default bindings for the controllers this package declares, by the names the controls",
+  "have (P1 A, P1 Main Stick X): the frontend matches a binding to a control by its exact",
+  "name (chimera#284 - written without the port, none applied). check-keybinds.py holds it.",
+  "The frontend ships no bindings of its own, and the user's own bindings always win.",
   "",
-  "The face buttons follow the pad's own geometry: A is the big center button and takes",
-  "the key under the hand, B sits below-left of it, X to the right, Y on top. Z is the",
-  "purple shoulder tab above R. The keyboard arrows drive the MAIN STICK, because that",
-  "is how a GameCube game is steered; the d-pad, a secondary control on this pad, takes",
-  "IJKL. Triggers are the analog travel; L and R the clicks at the bottom of it."
+  "Port 1 takes the keyboard, the first joystick (J1) and the first XInput pad (X1); ports",
+  "2 to 4 take the second to fourth pads only. The face buttons follow the pad's own",
+  "geometry: A is the big center button and takes the key under the hand, B sits below-left",
+  "of it, X to the right, Y on top. Z is the purple shoulder tab above R. A pad's sticks",
+  "drive the sticks in full (any angle, any distance); the keyboard arrows drive the MAIN",
+  "STICK at full tilt, because that is how a GameCube game is steered; the d-pad, a",
+  "secondary control on this pad, takes IJKL. Triggers are the analog travel; L and R the",
+  "clicks at the bottom of it."
  ],
  "AllTrollers": {
   "GameCube Controller": {
-   "A": "Z, J1 B2, X1 A",
-   "B": "A, J1 B1, X1 X",
-   "X": "X, J1 B3, X1 B",
-   "Y": "S, J1 B4, X1 Y",
-   "Z": "D, J1 B6, X1 RightShoulder",
-   "Start": "Enter, J1 B10, X1 Start",
-   "Up": "I, J1 POV1U, X1 DpadUp",
-   "Down": "K, J1 POV1D, X1 DpadDown",
-   "Left": "J, J1 POV1L, X1 DpadLeft",
-   "Right": "L, J1 POV1R, X1 DpadRight",
-   "L": "Q, J1 B5, X1 LeftShoulder",
-   "R": "W, J1 B7, X1 RightStick"
+   "P1 A": "Z, J1 B2, X1 A",
+   "P1 B": "A, J1 B1, X1 X",
+   "P1 X": "X, J1 B3, X1 B",
+   "P1 Y": "S, J1 B4, X1 Y",
+   "P1 Z": "D, J1 B6, X1 RightShoulder",
+   "P1 Start": "Enter, J1 B10, X1 Start",
+   "P1 Up": "I, J1 POV1U, X1 DpadUp",
+   "P1 Down": "K, J1 POV1D, X1 DpadDown",
+   "P1 Left": "J, J1 POV1L, X1 DpadLeft",
+   "P1 Right": "L, J1 POV1R, X1 DpadRight",
+   "P1 L": "Q, J1 B5, X1 LeftShoulder",
+   "P1 R": "W, J1 B7, X1 RightStick",
+   "P2 A": "J2 B2, X2 A",
+   "P2 B": "J2 B1, X2 X",
+   "P2 X": "J2 B3, X2 B",
+   "P2 Y": "J2 B4, X2 Y",
+   "P2 Z": "J2 B6, X2 RightShoulder",
+   "P2 Start": "J2 B10, X2 Start",
+   "P2 Up": "J2 POV1U, X2 DpadUp",
+   "P2 Down": "J2 POV1D, X2 DpadDown",
+   "P2 Left": "J2 POV1L, X2 DpadLeft",
+   "P2 Right": "J2 POV1R, X2 DpadRight",
+   "P2 L": "J2 B5, X2 LeftShoulder",
+   "P2 R": "J2 B7, X2 RightStick",
+   "P3 A": "J3 B2, X3 A",
+   "P3 B": "J3 B1, X3 X",
+   "P3 X": "J3 B3, X3 B",
+   "P3 Y": "J3 B4, X3 Y",
+   "P3 Z": "J3 B6, X3 RightShoulder",
+   "P3 Start": "J3 B10, X3 Start",
+   "P3 Up": "J3 POV1U, X3 DpadUp",
+   "P3 Down": "J3 POV1D, X3 DpadDown",
+   "P3 Left": "J3 POV1L, X3 DpadLeft",
+   "P3 Right": "J3 POV1R, X3 DpadRight",
+   "P3 L": "J3 B5, X3 LeftShoulder",
+   "P3 R": "J3 B7, X3 RightStick",
+   "P4 A": "J4 B2, X4 A",
+   "P4 B": "J4 B1, X4 X",
+   "P4 X": "J4 B3, X4 B",
+   "P4 Y": "J4 B4, X4 Y",
+   "P4 Z": "J4 B6, X4 RightShoulder",
+   "P4 Start": "J4 B10, X4 Start",
+   "P4 Up": "J4 POV1U, X4 DpadUp",
+   "P4 Down": "J4 POV1D, X4 DpadDown",
+   "P4 Left": "J4 POV1L, X4 DpadLeft",
+   "P4 Right": "J4 POV1R, X4 DpadRight",
+   "P4 L": "J4 B5, X4 LeftShoulder",
+   "P4 R": "J4 B7, X4 RightStick"
   },
   "Triforce Panel": {
-   "A": "Z, J1 B2, X1 A",
-   "B": "A, J1 B1, X1 X",
-   "X": "X, J1 B3, X1 B",
-   "Y": "S, J1 B4, X1 Y",
-   "Z": "D, J1 B6, X1 RightShoulder",
-   "Start": "Enter, J1 B10, X1 Start",
-   "Up": "I, J1 POV1U, X1 DpadUp",
-   "Down": "K, J1 POV1D, X1 DpadDown",
-   "Left": "J, J1 POV1L, X1 DpadLeft",
-   "Right": "L, J1 POV1R, X1 DpadRight",
-   "L": "Q, J1 B5, X1 LeftShoulder",
-   "R": "W, J1 B7, X1 RightStick",
-   "Coin": "Number5, J1 B9, X1 Back",
-   "Service": "Number9",
-   "Test": "F2"
+   "P1 A": "Z, J1 B2, X1 A",
+   "P1 B": "A, J1 B1, X1 X",
+   "P1 X": "X, J1 B3, X1 B",
+   "P1 Y": "S, J1 B4, X1 Y",
+   "P1 Z": "D, J1 B6, X1 RightShoulder",
+   "P1 Start": "Enter, J1 B10, X1 Start",
+   "P1 Up": "I, J1 POV1U, X1 DpadUp",
+   "P1 Down": "K, J1 POV1D, X1 DpadDown",
+   "P1 Left": "J, J1 POV1L, X1 DpadLeft",
+   "P1 Right": "L, J1 POV1R, X1 DpadRight",
+   "P1 L": "Q, J1 B5, X1 LeftShoulder",
+   "P1 R": "W, J1 B7, X1 RightStick",
+   "P1 Coin": "Number5, J1 B9, X1 Back",
+   "P1 Service": "Number9",
+   "P1 Test": "F2",
+   "P2 A": "J2 B2, X2 A",
+   "P2 B": "J2 B1, X2 X",
+   "P2 X": "J2 B3, X2 B",
+   "P2 Y": "J2 B4, X2 Y",
+   "P2 Z": "J2 B6, X2 RightShoulder",
+   "P2 Start": "J2 B10, X2 Start",
+   "P2 Up": "J2 POV1U, X2 DpadUp",
+   "P2 Down": "J2 POV1D, X2 DpadDown",
+   "P2 Left": "J2 POV1L, X2 DpadLeft",
+   "P2 Right": "J2 POV1R, X2 DpadRight",
+   "P2 L": "J2 B5, X2 LeftShoulder",
+   "P2 R": "J2 B7, X2 RightStick",
+   "P2 Coin": "J2 B9, X2 Back",
+   "P2 Service": "",
+   "P2 Test": ""
   }
  },
  "AllTrollersAutoFire": {
@@ -49,73 +104,209 @@
  },
  "AllTrollersAnalog": {
   "GameCube Controller": {
-   "Main Stick X": {
+   "P1 Main Stick X": {
     "Value": "X1 LeftThumbX Axis",
     "Mult": 1.0,
     "Deadzone": 0.1,
     "ButtonBindPositive": "Right",
     "ButtonBindNegative": "Left"
    },
-   "Main Stick Y": {
+   "P1 Main Stick Y": {
     "Value": "X1 LeftThumbY Axis",
     "Mult": -1.0,
     "Deadzone": 0.1,
     "ButtonBindPositive": "Down",
     "ButtonBindNegative": "Up"
    },
-   "C-Stick X": {
+   "P1 C-Stick X": {
     "Value": "X1 RightThumbX Axis",
     "Mult": 1.0,
     "Deadzone": 0.1
    },
-   "C-Stick Y": {
+   "P1 C-Stick Y": {
     "Value": "X1 RightThumbY Axis",
     "Mult": -1.0,
     "Deadzone": 0.1
    },
-   "Trigger L": {
+   "P1 Trigger L": {
     "Value": "X1 LeftTrigger Axis",
     "Mult": 1.0,
     "Deadzone": 0.0
    },
-   "Trigger R": {
+   "P1 Trigger R": {
     "Value": "X1 RightTrigger Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.0
+   },
+   "P2 Main Stick X": {
+    "Value": "X2 LeftThumbX Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.1,
+    "ButtonBindPositive": "",
+    "ButtonBindNegative": ""
+   },
+   "P2 Main Stick Y": {
+    "Value": "X2 LeftThumbY Axis",
+    "Mult": -1.0,
+    "Deadzone": 0.1,
+    "ButtonBindPositive": "",
+    "ButtonBindNegative": ""
+   },
+   "P2 C-Stick X": {
+    "Value": "X2 RightThumbX Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.1
+   },
+   "P2 C-Stick Y": {
+    "Value": "X2 RightThumbY Axis",
+    "Mult": -1.0,
+    "Deadzone": 0.1
+   },
+   "P2 Trigger L": {
+    "Value": "X2 LeftTrigger Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.0
+   },
+   "P2 Trigger R": {
+    "Value": "X2 RightTrigger Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.0
+   },
+   "P3 Main Stick X": {
+    "Value": "X3 LeftThumbX Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.1,
+    "ButtonBindPositive": "",
+    "ButtonBindNegative": ""
+   },
+   "P3 Main Stick Y": {
+    "Value": "X3 LeftThumbY Axis",
+    "Mult": -1.0,
+    "Deadzone": 0.1,
+    "ButtonBindPositive": "",
+    "ButtonBindNegative": ""
+   },
+   "P3 C-Stick X": {
+    "Value": "X3 RightThumbX Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.1
+   },
+   "P3 C-Stick Y": {
+    "Value": "X3 RightThumbY Axis",
+    "Mult": -1.0,
+    "Deadzone": 0.1
+   },
+   "P3 Trigger L": {
+    "Value": "X3 LeftTrigger Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.0
+   },
+   "P3 Trigger R": {
+    "Value": "X3 RightTrigger Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.0
+   },
+   "P4 Main Stick X": {
+    "Value": "X4 LeftThumbX Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.1,
+    "ButtonBindPositive": "",
+    "ButtonBindNegative": ""
+   },
+   "P4 Main Stick Y": {
+    "Value": "X4 LeftThumbY Axis",
+    "Mult": -1.0,
+    "Deadzone": 0.1,
+    "ButtonBindPositive": "",
+    "ButtonBindNegative": ""
+   },
+   "P4 C-Stick X": {
+    "Value": "X4 RightThumbX Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.1
+   },
+   "P4 C-Stick Y": {
+    "Value": "X4 RightThumbY Axis",
+    "Mult": -1.0,
+    "Deadzone": 0.1
+   },
+   "P4 Trigger L": {
+    "Value": "X4 LeftTrigger Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.0
+   },
+   "P4 Trigger R": {
+    "Value": "X4 RightTrigger Axis",
     "Mult": 1.0,
     "Deadzone": 0.0
    }
   },
   "Triforce Panel": {
-   "Main Stick X": {
+   "P1 Main Stick X": {
     "Value": "X1 LeftThumbX Axis",
     "Mult": 1.0,
     "Deadzone": 0.1,
     "ButtonBindPositive": "Right",
     "ButtonBindNegative": "Left"
    },
-   "Main Stick Y": {
+   "P1 Main Stick Y": {
     "Value": "X1 LeftThumbY Axis",
     "Mult": -1.0,
     "Deadzone": 0.1,
     "ButtonBindPositive": "Down",
     "ButtonBindNegative": "Up"
    },
-   "C-Stick X": {
+   "P1 C-Stick X": {
     "Value": "X1 RightThumbX Axis",
     "Mult": 1.0,
     "Deadzone": 0.1
    },
-   "C-Stick Y": {
+   "P1 C-Stick Y": {
     "Value": "X1 RightThumbY Axis",
     "Mult": -1.0,
     "Deadzone": 0.1
    },
-   "Trigger L": {
+   "P1 Trigger L": {
     "Value": "X1 LeftTrigger Axis",
     "Mult": 1.0,
     "Deadzone": 0.0
    },
-   "Trigger R": {
+   "P1 Trigger R": {
     "Value": "X1 RightTrigger Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.0
+   },
+   "P2 Main Stick X": {
+    "Value": "X2 LeftThumbX Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.1,
+    "ButtonBindPositive": "",
+    "ButtonBindNegative": ""
+   },
+   "P2 Main Stick Y": {
+    "Value": "X2 LeftThumbY Axis",
+    "Mult": -1.0,
+    "Deadzone": 0.1,
+    "ButtonBindPositive": "",
+    "ButtonBindNegative": ""
+   },
+   "P2 C-Stick X": {
+    "Value": "X2 RightThumbX Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.1
+   },
+   "P2 C-Stick Y": {
+    "Value": "X2 RightThumbY Axis",
+    "Mult": -1.0,
+    "Deadzone": 0.1
+   },
+   "P2 Trigger L": {
+    "Value": "X2 LeftTrigger Axis",
+    "Mult": 1.0,
+    "Deadzone": 0.0
+   },
+   "P2 Trigger R": {
+    "Value": "X2 RightTrigger Axis",
     "Mult": 1.0,
     "Deadzone": 0.0
    }
