@@ -127,6 +127,13 @@ ECL_EXPORT int Init(void)
       return 0;
     }
   }
+  char lagFrames[16] = "picture";
+  wbx_setting_str("lag_frames", lagFrames, sizeof lagFrames);
+  if (!chimera_dolphin_set_lag_frames(lagFrames))
+  {
+    snprintf(g_loadError, sizeof g_loadError, "setting lag_frames: unknown value '%s'", lagFrames);
+    return 0;
+  }
   char cpuCore[32] = "jit";
   wbx_setting_str("cpu_core", cpuCore, sizeof cpuCore);
   chimera_dolphin_set_cpu_core(cpuCore);

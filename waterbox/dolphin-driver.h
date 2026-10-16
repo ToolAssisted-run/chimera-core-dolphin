@@ -24,6 +24,9 @@ void chimera_dolphin_shutdown(void);
 void chimera_dolphin_set_button(int pad, int index, int state);
 void chimera_dolphin_set_axis(int pad, int index, int value);
 int chimera_dolphin_input_was_read(void);
+// what a lag frame is: "picture" (no new picture, the default) or "controller"
+// (the first controller not read); 0 for anything else
+int chimera_dolphin_set_lag_frames(const char* name);
 const uint32_t* chimera_dolphin_video(int* w, int* h);
 const int16_t* chimera_dolphin_audio(int* frames);
 int chimera_dolphin_vsync_numerator(void);

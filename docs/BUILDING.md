@@ -309,7 +309,9 @@ committed as `tests/roms/swiss_r2092.dol`. So tier 1 runs from a fresh clone:
 | native deterministic | two native runs agree |
 | native == sandbox | RAM, video, audio and lag digests are identical in the sandbox |
 | rewind, rerecord | a state loaded mid-run replays identically; save and load around every frame changes nothing |
-| input, lag | a press reaches the machine, in both flavors; the pad is polled every frame |
+| input | a press reaches the machine, in both flavors |
+| lag (controller) | with Lag Frames at "controller", no frame is lag: the serial chip reads the pad every frame |
+| lag | the Lag Frames setting reaches the sandbox: native == sandbox with it set |
 | cpu core `interpreter`, `cached-interpreter` | each is flavor-equal and survives rerecording (the default, `jit`, is what the other legs run) |
 | ports | a second controller is a different machine, equal across flavors |
 | gpu | the OpenGL backend through the GPU bridge: native == sandbox on this driver, and every opcode the guest sent was answered |
@@ -323,6 +325,7 @@ Skipped without content or without Chimera:
 | Legs | Needs |
 | --- | --- |
 | disc | a GameCube disc image at the path the `disc=` line at the top of `run-gate.sh` names, under `tests/roms-local/`, or `DOLPHIN_DISC` |
+| lag (picture) | the same disc: with Lag Frames at "picture" (the default), some of 600 frames and not all made no new picture; at "controller" none is lag; the machine is the same under both; native == sandbox (chimera#292) |
 | discs | the same disc: Disc Swap held for 60 frames, closing on the project's second disc (the same image under another name), changes the run, the same natively, in the sandbox and with a state around every frame; a second "disc" that is no disc leaves the lid up (chimera#286) |
 | wii disc, wii rerecord, machine, widescreen, wii save refusal, wii save round-trip, wii controllers | a Wii disc image: `DOLPHIN_WII_DISC`, or the path the `wiidisc=` line names. The wii controllers leg: a Wii Remote, one with a Nunchuk and one with a Classic Controller are each another machine than a GameCube controller, A, C and a, the pointer, Shake and the tilt reach the game (native == sandbox), a state around every frame changes nothing with a Wii Remote, and a GameCube game refuses a Wii Remote (chimera#285) |
 | triforce, triforce rerecord, triforce coin, triforce machine | `DOLPHIN_TRIFORCE`, a Triforce image |

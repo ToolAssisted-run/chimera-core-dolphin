@@ -39,7 +39,7 @@ runwbx="$wb/bin/run-wbx"
 wbx="$wb/bin/core.wbx"
 sys="$root/extern/dolphin/Data/Sys"
 swiss="$root/tests/roms/swiss_r2092.dol"
-disc="$root/tests/roms-local/Mortal Kombat - Deadly Alliance.iso"
+disc="${DOLPHIN_DISC:-$root/tests/roms-local/Mortal Kombat - Deadly Alliance.iso}"
 [ -f "$emu_exe" ] || { echo "Chimera not built: $emu_exe" >&2; exit 1; }
 [ -f "$package" ] || { echo "package not installed: $package (run ../build-package.sh)" >&2; exit 1; }
 [ -x "$runwbx" ] || { echo "run-wbx not built (../build-core.sh)" >&2; exit 1; }
@@ -149,6 +149,27 @@ if [ -f "$disc" ]; then
 	fi
 else
 	report "disc:frontend" SKIP "no commercial disc in tests/roms-local"
+fi
+
+# --- 2b. lag frames reach Chimera (chimera#292) -----------------------------
+# 600 frames: a game's loading and its frames at 30 pictures a second make no
+# new picture, so the default Lag Frames counts some lag and not all. Chimera
+# must count exactly what the sandbox does.
+if [ -f "$disc" ]; then
+	env -u LD_LIBRARY_PATH timeout 900 "$runwbx" "$wbx" --sys "$sys" --frames 600 --report 600 \
+		"$disc" > "$work/ref.lag.log" 2>&1
+	ref_lag="$(grep '^frame' "$work/ref.lag.log" | tail -1 | sed -n 's/.* lag \([0-9]*\)$/\1/p')"
+	if [ -z "$ref_lag" ] || [ "$ref_lag" -eq 0 ] || [ "$ref_lag" -ge 600 ]; then
+		report "lag:frontend" FAIL "the sandbox counted ${ref_lag:-nothing} lag frames of 600 (see tests/work/ref.lag.log)"
+	elif ! run_frontend "lag" "$work/config.base.ini" 600 "" "$disc"; then
+		report "lag:frontend" FAIL "no OK meta (see tests/work/lag.log)"
+	elif [ "$(sed -n 's/^lag=//p' "$work/lag.meta.txt")" != "$ref_lag" ]; then
+		report "lag:frontend" FAIL "Chimera counted $(sed -n 's/^lag=//p' "$work/lag.meta.txt") lag frames, the sandbox $ref_lag"
+	else
+		report "lag:frontend" PASS "$ref_lag of 600 frames are lag in Chimera, as the sandbox counts them"
+	fi
+else
+	report "lag:frontend" SKIP "no commercial disc in tests/roms-local, or DOLPHIN_DISC"
 fi
 
 # --- 3. a machine-shaping setting arrives through the frontend --------------

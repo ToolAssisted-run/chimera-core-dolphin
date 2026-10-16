@@ -721,3 +721,30 @@ the Classic's a, the pointer, Shake and the tilt each change the machine;
 native and sandbox agree, and a state saved and loaded around every frame
 changes nothing. Not tried: playing a game that needs the pointer or a
 gesture, the Classic's analog triggers, and more than one Wii Remote.
+
+## Lag frames are frames with no new picture (user-decided, 2026-10-16, chimera#292)
+
+The core reported a lag frame when the first controller was not read during
+the frame. On a GameCube that almost never happens: once a game turns on the
+serial chip's polling, the chip reads the controllers by itself every field,
+whether the game looks at the answer or not. So the piano roll showed no lag
+at all, which was the complaint.
+
+Decided by the owner: a setting, Lag Frames, with "No new picture"
+(`picture`, the default) and "Controller not read" (`controller`, the old
+meaning). A frame has a new picture when the game copied its drawing to the
+XFB, the buffer the screen shows, during the frame. Dolphin announces every
+such copy as `after_frame_event` (`BPStructs.cpp`, the XFB branch of the
+copy command, the only place it is triggered); the driver registers on it
+and clears the flag before each frame. Every renderer goes through that
+command, and with one CPU thread it runs inside the frame, so the count is
+the same on every computer. Neither choice changes the machine: Pro Rally
+2002 over 1200 frames has the same RAM, picture and sound under both, with
+754 lag frames under "picture" (its loading, then every other frame at 30
+pictures a second) and 0 under "controller". The labels use the new
+`optionLabels` package field (chimera#293); an older Chimera shows the
+values themselves.
+
+The reporter pointed at BizHawk's Dolphin fork, whose "GPU Lag Frames"
+setting marks a frame in which no new frame was presented. The idea is the
+same; its code was not read or used.

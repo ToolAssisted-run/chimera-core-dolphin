@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: MIT
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <cstdlib>
@@ -56,6 +57,7 @@
 #include "Core/Config/GraphicsSettings.h"
 #include "VideoCommon/VideoBackendBase.h"
 #include "VideoCommon/VideoConfig.h"
+#include "VideoCommon/VideoEvents.h"
 #include "VideoCommon/Widescreen.h"
 #include "VideoCommon/TextureConfig.h"
 #include "VideoCommon/AbstractGfx.h"
@@ -103,6 +105,14 @@ static int s_disc_selected;
 static bool s_lid_up;
 static uint8_t s_console[3], s_console_was[3];
 static bool s_input_read;
+// What a lag frame is (chimera#292). By default a frame in which the game made
+// no new picture: no copy of the drawn frame to the XFB, the buffer the screen
+// shows, which Dolphin announces as after_frame_event. The other choice, the
+// first controller not read, almost never happens on a GameCube: the serial
+// chip reads the pads by itself every field once a game has turned it on.
+static bool s_lag_by_picture = true;
+static std::atomic<bool> s_picture_new;
+static Common::EventHook s_picture_hook;
 static bool s_memcard_a = true;
 // The Wii's "Screen: Widescreen" system setting, which a Wii game reads from
 // its SYSCONF to choose 16:9 or 4:3 (chimera#147). Part of the machine: the
@@ -832,6 +842,9 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
   // HLE audio mixed into a buffer nobody plays, no throttle - the harness is
   // the clock.
   Config::AddLayer(std::make_unique<ChimeraConfigLayer>());
+  // the game finished a picture: every renderer copies it to the XFB through
+  // the same command, single-core, on this thread's emulation
+  s_picture_hook = GetVideoEvents().after_frame_event.Register([](Core::System&) { s_picture_new = true; });
   // land paused: zero instructions run before the first frame advance
   SConfig::GetInstance().bBootToPause = true;
 
@@ -1057,6 +1070,7 @@ void chimera_dolphin_frame(void)
   // Paused at the end of the next VI field, so waiting for Paused after the
   // call cannot race the step.
   s_input_read = false;
+  s_picture_new = false;
   Core::DoFrameStep(Sys());
   WaitForState(Core::State::Paused);
   // The state flag flips to Paused before the CPU thread has fully settled;
@@ -1133,7 +1147,16 @@ void chimera_dolphin_set_axis(int pad, int index, int value)
 
 int chimera_dolphin_input_was_read(void)
 {
-  return s_input_read ? 1 : 0;
+  return (s_lag_by_picture ? s_picture_new.load() : s_input_read) ? 1 : 0;
+}
+
+int chimera_dolphin_set_lag_frames(const char* name)
+{
+  if (name && strcmp(name, "picture") == 0)
+    return s_lag_by_picture = true, 1;
+  if (name && strcmp(name, "controller") == 0)
+    return s_lag_by_picture = false, 1;
+  return 0;
 }
 
 const uint32_t* chimera_dolphin_video(int* w, int* h)

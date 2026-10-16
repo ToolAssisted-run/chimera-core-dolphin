@@ -116,6 +116,15 @@ int main(int argc, char** argv)
       savedata_out = argv[++i];
     else if (!strcmp(argv[i], "--cpu-core") && i + 1 < argc)
       chimera_dolphin_set_cpu_core(argv[++i]);
+    // what a lag frame is, as the Lag Frames setting says: picture | controller
+    else if (!strcmp(argv[i], "--lag-frames") && i + 1 < argc)
+    {
+      if (!chimera_dolphin_set_lag_frames(argv[++i]))
+      {
+        fprintf(stderr, "--lag-frames: picture or controller\n");
+        return 2;
+      }
+    }
     else if (!strcmp(argv[i], "--machine") && i + 1 < argc)
     {
       wii = strcmp(argv[i + 1], "wii") == 0;

@@ -97,8 +97,17 @@ else
 	else FAIL "input leg - press runs differ between flavors"; fi
 fi
 
-if grep -q "lag 0$" "$work/n1.txt"; then PASS "lag leg - the machine polls the pad every frame"
-else FAIL "lag leg - unpolled frames counted"; fi
+# ---- lag frames (chimera#292) ------------------------------------------------
+# "controller": the serial chip reads the pad by itself every field, so no
+# frame is lag - which is why "picture" (no new picture) is the default. Swiss
+# copies a picture to the XFB every field too, so it can only show that the
+# setting reaches the sandbox; the disc legs below show a game's lag.
+nat lc --lag-frames controller --frames "$frames" --report 1 "$swiss" > "$work/lc.txt"
+if [ -s "$work/lc.txt" ] && grep -q "lag 0$" "$work/lc.txt"; then PASS "lag leg (controller) - the machine reads the pad every frame"
+else FAIL "lag leg (controller) - unread frames counted"; fi
+wbx --settings '{"lag_frames":"controller"}' --frames "$frames" --report 1 "$swiss" > "$work/lcg.txt"
+if [ -s "$work/lcg.txt" ] && cmp -s "$work/lc.txt" "$work/lcg.txt"; then PASS "lag leg - the Lag Frames setting reaches the sandbox, native == sandbox"
+else FAIL "lag leg - the sandbox run with lag_frames differs from the native one"; fi
 
 # ---- the other cpu cores: each deterministic and flavor-equal --------------
 # The default (jit) is what every leg above ran; each alternative is a
@@ -198,8 +207,24 @@ if [ -f "$disc" ]; then
 	wbx --frames "$frames" --report 1 "$disc" > "$work/dg.txt"
 	if [ -s "$work/d1.txt" ] && cmp -s "$work/d1.txt" "$work/dg.txt"; then PASS "disc leg - native == sandbox at $frames frames"
 	else FAIL "disc leg"; fi
+	# lag frames on a game (chimera#292): a game's loading and its frames at 30
+	# a second make no new picture, so "picture" (the default) counts some lag
+	# and not all; "controller" counts none; and the machine is the same under
+	# both - only the lag column may differ
+	nat lp --frames 600 --report 1 "$disc" > "$work/lp.txt"
+	nat lq --lag-frames controller --frames 600 --report 1 "$disc" > "$work/lq.txt"
+	wbx --frames 600 --report 1 "$disc" > "$work/lpg.txt"
+	picture_lag="$(tail -1 "$work/lp.txt" | sed -n 's/.* lag \([0-9]*\)$/\1/p')"
+	if [ -z "$picture_lag" ] || [ "$picture_lag" -eq 0 ] || [ "$picture_lag" -ge 600 ]; then
+		FAIL "lag leg (picture) - ${picture_lag:-no} lag frames of 600 on the disc"
+	elif ! grep -q "lag 0$" "$work/lq.txt" || [ "$(tail -1 "$work/lq.txt")" != "$(tail -1 "$work/lp.txt" | sed 's/ lag [0-9]*$/ lag 0/')" ]; then
+		FAIL "lag leg (picture) - the controller count is not 0, or the machine differs between the two"
+	elif ! cmp -s "$work/lp.txt" "$work/lpg.txt"; then
+		FAIL "lag leg (picture) - native and sandbox count differently"
+	else PASS "lag leg (picture) - $picture_lag of 600 frames made no new picture, none left the pad unread, the same machine either way, native == sandbox"; fi
 else
 	SKIP "disc leg (no commercial disc in tests/roms-local) - would prove DiscIO+DVD timing equivalence on a real game"
+	SKIP "lag leg (picture) (no commercial disc) - would prove a game's frames without a new picture are counted"
 fi
 
 # ---- tier 2a: a game on several discs (chimera#286) -------------------------
