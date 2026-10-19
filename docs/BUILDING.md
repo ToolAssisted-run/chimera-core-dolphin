@@ -165,7 +165,7 @@ Only `waterbox/guest-toolchain.cmake` reads it.
 
 ### Patches
 
-`extern/dolphin` is pinned to pristine upstream. The 29 numbered patches in
+`extern/dolphin` is pinned to pristine upstream. The 31 numbered patches in
 `patches/` are applied to it by `waterbox/apply-patches.sh`. There is no
 separate step: `build-native.sh` and `build-guest.sh` both run it first.
 
@@ -177,7 +177,7 @@ The script judges the series as a whole:
 - If the working tree is pristine it applies the series and prints
   `applied: <patch>` for each.
 - If the working tree is exactly what the series leaves behind it prints
-  `already applied: all 24 patches` and changes nothing.
+  `already applied: all 31 patches` and changes nothing.
 - Anything in between is an error that names the files and prints the reset
   command.
 

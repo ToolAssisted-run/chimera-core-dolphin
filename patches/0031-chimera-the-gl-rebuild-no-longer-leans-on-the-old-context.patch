@@ -1,0 +1,165 @@
+diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.cpp b/Source/Core/VideoBackends/OGL/OGLGfx.cpp
+--- a/Source/Core/VideoBackends/OGL/OGLGfx.cpp
++++ b/Source/Core/VideoBackends/OGL/OGLGfx.cpp
+@@ -754,6 +754,29 @@
+   {
+   }
+ 
++  // The context's own settings, which start-up made once (the constructor
++  // above, and OGLConfig's backend info). Since every load is a fresh context
++  // (Chimera, 2026-10-19), the rebuild finds OpenGL's defaults: depth mapped
++  // to -1..1 and not clamped, no clip distances, strips that do not restart.
++  // The same draws then made another picture, the picture went to RAM, and
++  // the machine went another way. This is the list the shader compiler's
++  // shared contexts are given (ProgramShaderCache.cpp), with the unpack
++  // alignment and the scissor test, which a draw assumes are on.
++  if (!IsGLES())
++    glEnable(GL_PROGRAM_POINT_SIZE);
++  if (g_backend_info.bSupportsClipControl)
++    glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
++  if (g_backend_info.bSupportsDepthClamp)
++  {
++    glEnable(GL_CLIP_DISTANCE0);
++    glEnable(GL_CLIP_DISTANCE1);
++    glEnable(GL_DEPTH_CLAMP);
++  }
++  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
++  if (g_backend_info.bSupportsPrimitiveRestart)
++    GLUtil::EnablePrimitiveRestart(m_main_gl_context.get());
++  glEnable(GL_SCISSOR_TEST);
++
+   // Low-level objects that persistent-mapped buffers a frame writes through
+   // before any higher call: the uniform buffer + attributeless VAO, and the
+   // vertex manager's stream buffers. The program map is left intact - the
+@@ -781,12 +804,21 @@
+   // demand - and with them the vertex loaders, which the machine's vertex
+   // format groups point at: ChimeraClearAndForget makes each be looked up
+   // again, where a bare Clear() left the next primitive running a freed one.
+-  VertexLoaderManager::ChimeraClearAndForget();
++  VertexLoaderManager::ChimeraRemakeFormats(
++      [](NativeVertexFormat* format) { static_cast<GLVertexFormat*>(format)->ChimeraRemake(); });
+   // (The texture cache was emptied before this function was entered - see
+   // chimera_dolphin_gl_frame_start - so that what it keeps across a load is
+-  // not thrown away here.)
++  // not thrown away here.) Its own textures are made again: the framebuffer an
++  // EFB copy is encoded in on its way to RAM, its texture, and the texture a
++  // copy is decoded from. They named the gone context too, and went on working
++  // only while Chimera kept that context alive beside the new names; since
++  // every load is a fresh context (Chimera, 2026-10-19), every EFB copy to RAM
++  // after a load drew into a framebuffer that was not there - the picture a
++  // game shows from RAM stopped moving and the machine went another way. The
++  // Vulkan rebuild already makes them.
++  if (!g_texture_cache->ChimeraUtilityTextures(true))
++    PanicAlertFmt("chimera: the texture cache's own textures could not be made again");
+   g_framebuffer_manager->RecreateEFBFramebuffer(g_ActiveConfig.iEFBScale);
+-  g_framebuffer_manager->RecompileShaders();
+   // Reload() destroys every pipeline, and the vertex manager keeps the one it
+   // last drew with until its configuration changes. Upstream never reloads
+   // without telling it (VideoConfig.cpp, on a host configuration change); a
+@@ -794,6 +826,12 @@
+   // back with it.
+   g_vertex_manager->InvalidatePipelineObject();
+   g_shader_cache->Reload();
++  // The EFB's own pipelines after the shader cache's, as at start-up and in
++  // the Vulkan rebuild: they are linked from the shader cache's shared shaders,
++  // which Reload() makes again. Made first, they were linked from the shaders
++  // of the gone context - which only worked while Chimera kept that context
++  // alive.
++  g_framebuffer_manager->RecompileShaders();
+ 
+   // Nothing the renderer thought was bound still is.
+   ProgramShaderCache::InvalidateVertexFormat();
+diff --git a/Source/Core/VideoBackends/OGL/OGLNativeVertexFormat.cpp b/Source/Core/VideoBackends/OGL/OGLNativeVertexFormat.cpp
+--- a/Source/Core/VideoBackends/OGL/OGLNativeVertexFormat.cpp
++++ b/Source/Core/VideoBackends/OGL/OGLNativeVertexFormat.cpp
+@@ -49,6 +49,23 @@
+ GLVertexFormat::GLVertexFormat(const PortableVertexDeclaration& vtx_decl)
+     : NativeVertexFormat(vtx_decl)
+ {
++  MakeVAO();
++}
++
++// chimera: a fresh GL context after a load has none of the vertex arrays, and
++// the format is kept - pipelines the shader cache makes again point at it - so
++// its array is made again in place. The old name names nothing now; deleting
++// it frees only the number.
++void GLVertexFormat::ChimeraRemake()
++{
++  ProgramShaderCache::InvalidateVertexFormatIfBound(VAO);
++  glDeleteVertexArrays(1, &VAO);
++  MakeVAO();
++}
++
++void GLVertexFormat::MakeVAO()
++{
++  const PortableVertexDeclaration& vtx_decl = m_decl;
+   const u32 vertex_stride = vtx_decl.stride;
+ 
+   // We will not allow vertex components causing uneven strides.
+diff --git a/Source/Core/VideoBackends/OGL/OGLVertexManager.h b/Source/Core/VideoBackends/OGL/OGLVertexManager.h
+--- a/Source/Core/VideoBackends/OGL/OGLVertexManager.h
++++ b/Source/Core/VideoBackends/OGL/OGLVertexManager.h
+@@ -20,7 +20,14 @@
+   GLVertexFormat(const PortableVertexDeclaration& vtx_decl);
+   ~GLVertexFormat() override;
+ 
++  // chimera: the vertex array again, in the context there is now and on the
++  // stream buffers there are now (OGLGfx::ChimeraRebuildGLObjects)
++  void ChimeraRemake();
++
+   GLuint VAO;
++
++private:
++  void MakeVAO();
+ };
+ 
+ // Handles the OpenGL details of drawing lots of vertices quickly.
+diff --git a/Source/Core/VideoCommon/VertexLoaderManager.cpp b/Source/Core/VideoCommon/VertexLoaderManager.cpp
+--- a/Source/Core/VideoCommon/VertexLoaderManager.cpp
++++ b/Source/Core/VideoCommon/VertexLoaderManager.cpp
+@@ -105,6 +105,24 @@
+   MarkAllDirty();
+ }
+ 
++// chimera: ChimeraClearAndForget() freed the formats, and the shader cache's
++// pipelines - made again from their uids right after - kept pointing at them:
++// a draw then bound whatever vertex array number the freed memory held, which
++// worked while Chimera kept the old GL context alive (the number was still a
++// vertex array there) and drew with the wrong one once every load was a fresh
++// context. So the formats stay, each makes its own array again, and the next
++// primitive looks its format up as after a clear.
++void ChimeraRemakeFormats(const std::function<void(NativeVertexFormat*)>& remake)
++{
++  {
++    std::lock_guard<std::mutex> lk(s_vertex_loader_map_lock);
++    for (auto& [decl, format] : s_native_vertex_map)
++      remake(format.get());
++  }
++  s_current_vtx_fmt = nullptr;
++  MarkAllDirty();
++}
++
+ void UpdateVertexArrayPointers()
+ {
+   // Anything to update?
+diff --git a/Source/Core/VideoCommon/VertexLoaderManager.h b/Source/Core/VideoCommon/VertexLoaderManager.h
+--- a/Source/Core/VideoCommon/VertexLoaderManager.h
++++ b/Source/Core/VideoCommon/VertexLoaderManager.h
+@@ -4,6 +4,7 @@
+ #pragma once
+ 
+ #include <array>
++#include <functional>
+ #include <memory>
+ #include <string>
+ #include <unordered_map>
+@@ -29,6 +30,9 @@
+ void Clear();
+ // chimera: Clear(), and nothing left pointing at what it freed (the GL rebuild after a load)
+ void ChimeraClearAndForget();
++// chimera: every native vertex format, kept, for a renderer that makes its
++// device objects again in place (the GL rebuild after a load)
++void ChimeraRemakeFormats(const std::function<void(NativeVertexFormat*)>& remake);
+ 
+ void MarkAllDirty();
+ 

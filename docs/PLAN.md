@@ -748,3 +748,46 @@ values themselves.
 The reporter pointed at BizHawk's Dolphin fork, whose "GPU Lag Frames"
 setting marks a frame in which no new frame was presented. The idea is the
 same; its code was not read or used.
+
+## The GL rebuild after a load no longer leans on the old context (2026-10-19)
+
+Chimera is to give a core a fresh GL context with every load that moves the
+context id (owner's decision, 2026-10-19, as the Vulkan bridge already does):
+the old context destroyed with every object in it. Until now the old context
+lived on, and Dolphin's GL rebuild after a load leaned on that in four places.
+Tried with a fresh context, Pro Rally 2002 rewound once from frame 7800 to
+7500 ended with 129 KB of System RAM different from a straight run, and the
+picture a frame behind. Chimera's `CHIMERA_GL_STALE=1` named the objects.
+
+- The texture cache's own textures (the framebuffer an EFB copy to RAM is
+  encoded in, its texture, and the decoding texture) were never made again:
+  every EFB copy to RAM after a load drew into nothing. The GL rebuild now
+  calls `ChimeraUtilityTextures(true)`, as the Vulkan rebuild does.
+- The EFB's own pipelines were compiled before the shader cache's
+  `Reload()`, so they were linked from the shader cache's old shaders. They
+  come after it now, as at start-up and in the Vulkan rebuild.
+- The context's own settings, made once at start-up, were not made again:
+  `glClipControl`, depth clamp and the clip distances, primitive restart,
+  program point size, the unpack alignment and the scissor test. Without
+  them the same draws made another picture, which went to RAM: 1.1 MB of it
+  differed.
+- The native vertex formats were freed (`ChimeraClearAndForget`) while the
+  pipelines the shader cache makes again from their uids still pointed at
+  them; a draw then bound whatever vertex array number the freed memory held.
+  The formats are now kept, and each makes its own vertex array again on the
+  new stream buffers (`ChimeraRemakeFormats`, `GLVertexFormat::ChimeraRemake`).
+  This one is a use of freed memory under any Chimera.
+
+Patch 0031. With today's Chimera (the old context kept) nothing changes that
+can be seen: the gate passes (25 ok, 9 skipped), and on the GTX 1060 Pro
+Rally 2002 rewound 8 times from 7800 to 7500 ends with System RAM, ARAM and
+the picture the same as a straight run. With a fresh context per load, the
+same run ends with System RAM and ARAM the same, but two things are still
+wrong and their cause is not found: 15 pixels of the race differ (by at most
+8 levels, and still 60 frames later), and in the gate's picture-after-load
+leg the second frame after a load is drawn only in part (Swiss: the
+background and the title, 37% of the pixels), with RAM different at that
+frame. Neither is a name of the old context still in use (the names report
+lists none), nor a setting of the context (all compared the same), nor a
+texture unit, a buffer pool or a mapping of the old context. Chimera does not
+give fresh contexts until this is found.
