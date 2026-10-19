@@ -1,7 +1,17 @@
 diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.cpp b/Source/Core/VideoBackends/OGL/OGLGfx.cpp
 --- a/Source/Core/VideoBackends/OGL/OGLGfx.cpp
 +++ b/Source/Core/VideoBackends/OGL/OGLGfx.cpp
-@@ -754,6 +754,29 @@
+@@ -19,6 +19,9 @@
+ #include "VideoBackends/OGL/SamplerCache.h"
+ 
+ #include "VideoCommon/AsyncShaderCompiler.h"
++#include "VideoCommon/BPFunctions.h"
++#include "VideoCommon/BPMemory.h"
++#include "VideoCommon/XFMemory.h"
+ #include "VideoCommon/BoundingBox.h"
+ #include "VideoCommon/DriverDetails.h"
+ #include "VideoCommon/FramebufferManager.h"
+@@ -754,6 +757,29 @@
    {
    }
  
@@ -31,7 +41,27 @@ diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.cpp b/Source/Core/VideoBackend
    // Low-level objects that persistent-mapped buffers a frame writes through
    // before any higher call: the uniform buffer + attributeless VAO, and the
    // vertex manager's stream buffers. The program map is left intact - the
-@@ -781,12 +804,21 @@
+@@ -761,6 +787,19 @@
+   // it, so it stays balanced (Shutdown() would demand it already empty).
+   ProgramShaderCache::ReacquireContextObjects();
+   static_cast<VertexManager*>(g_vertex_manager.get())->RecreateStreamBuffers();
++  // Every uniform block index gets a range of the new uniform buffer, and the
++  // constants are marked to go up again - what a utility draw does. A game's
++  // draws bind indices 1, 2 and 4 when their constants change, and 3 only for
++  // custom constants, while its shaders declare block 3 all the same: it
++  // reads whatever 3 holds, which is the range the last utility draw bound.
++  // In a fresh context (every load, since Chimera 2026-10-19) nothing is bound
++  // there until the first utility draw, and Mesa drew nothing meanwhile: the
++  // first frame after a load lost every draw before its EFB copy (the gate's
++  // picture-after-load leg, Swiss: the second frame after a load drawn in part).
++  {
++    static constexpr u8 zeros[256] = {};
++    static_cast<VertexManager*>(g_vertex_manager.get())->UploadUtilityUniforms(zeros, sizeof(zeros));
++  }
+ 
+   // The two shared framebuffers, the samplers, the bounding-box SSBO and the
+   // perf-query objects.
+@@ -781,12 +820,21 @@
    // demand - and with them the vertex loaders, which the machine's vertex
    // format groups point at: ChimeraClearAndForget makes each be looked up
    // again, where a bare Clear() left the next primitive running a freed one.
@@ -56,7 +86,7 @@ diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.cpp b/Source/Core/VideoBackend
    // Reload() destroys every pipeline, and the vertex manager keeps the one it
    // last drew with until its configuration changes. Upstream never reloads
    // without telling it (VideoConfig.cpp, on a host configuration change); a
-@@ -794,6 +826,12 @@
+@@ -794,6 +842,12 @@
    // back with it.
    g_vertex_manager->InvalidatePipelineObject();
    g_shader_cache->Reload();
@@ -69,6 +99,21 @@ diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.cpp b/Source/Core/VideoBackend
  
    // Nothing the renderer thought was bound still is.
    ProgramShaderCache::InvalidateVertexFormat();
+@@ -813,6 +867,14 @@
+   // clear first is what stops SetFramebuffer taking it for a no-op.
+   m_current_framebuffer = nullptr;
+   g_framebuffer_manager->BindEFBFramebuffer();
++  // The viewport, the depth range and the scissor box are the context's, and
++  // the renderer sets them only when the machine changes them: a fresh context
++  // (every load, since Chimera 2026-10-19) has a 0x0 viewport without a
++  // surface, and every draw until the game moved its viewport was clipped
++  // away - the first frame after a load drew nothing. Set from the machine's
++  // registers, as the Vulkan rebuild does.
++  BPFunctions::SetScissorAndViewport(g_framebuffer_manager.get(), bpmem.scissorTL, bpmem.scissorBR,
++                                     bpmem.scissorOffset, xfmem.viewport);
+   m_current_rasterization_state = RenderState::GetInvalidRasterizationState();
+   m_current_depth_state = RenderState::GetInvalidDepthState();
+   m_current_blend_state = RenderState::GetInvalidBlendingState();
 diff --git a/Source/Core/VideoBackends/OGL/OGLNativeVertexFormat.cpp b/Source/Core/VideoBackends/OGL/OGLNativeVertexFormat.cpp
 --- a/Source/Core/VideoBackends/OGL/OGLNativeVertexFormat.cpp
 +++ b/Source/Core/VideoBackends/OGL/OGLNativeVertexFormat.cpp
