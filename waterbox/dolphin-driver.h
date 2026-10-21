@@ -43,6 +43,9 @@ int chimera_dolphin_options_report(char* out, int size);
 void chimera_dolphin_set_switch(int pad, int index, int state);
 // nonzero when the project is a Triforce cabinet
 int chimera_dolphin_triforce(void);
+// a Triforce panel's control in place `wire` of a player's fifteen, in the
+// order waterbox.config declares them
+void chimera_dolphin_set_triforce_control(int pad, int wire, int state);
 // a Wii project's saves to start from: the .zip Export Save Data wrote
 void chimera_dolphin_set_wii_savedata(const char* zip_path);
 // The Triforce's SegaBoot firmware, by the name it can be opened under; null

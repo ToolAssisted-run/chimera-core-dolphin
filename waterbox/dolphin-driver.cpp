@@ -1138,6 +1138,23 @@ int chimera_dolphin_triforce(void)
   return Triforce() ? 1 : 0;
 }
 
+// A Triforce panel's controls, as waterbox.config declares a player's
+// fifteen: the GameCube pad's twelve buttons with the cabinet's Coin right
+// after Start (chimera#337), then Service and Test. The pad's buttons go by
+// their place on the pad's wire (A, B, X, Y, Z, Start, Up, Down, Left, Right,
+// L, R), Coin, Service and Test by theirs on the switch word.
+void chimera_dolphin_set_triforce_control(int pad, int wire, int state)
+{
+  static const int kPadButton[15] = {0, 1, 2, 3, 4, 5, -1, 6, 7, 8, 9, 10, 11, -1, -1};
+  static const int kSwitch[15] = {-1, -1, -1, -1, -1, -1, 2, -1, -1, -1, -1, -1, -1, 1, 0};
+  if (wire < 0 || wire >= 15)
+    return;
+  if (kPadButton[wire] >= 0)
+    chimera_dolphin_set_button(pad, kPadButton[wire], state);
+  else
+    chimera_dolphin_set_switch(pad, kSwitch[wire], state);
+}
+
 void chimera_dolphin_set_axis(int pad, int index, int value)
 {
   if (pad < 0 || pad >= 4 || index < 0 || index >= 6)

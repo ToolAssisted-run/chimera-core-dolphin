@@ -252,8 +252,13 @@ int main(int argc, char** argv)
     for (int pi = 0; pi < presses; pi++)
     {
       // the wire order of the panel, as the sandbox's entry point reads it:
-      // twelve buttons, then a Triforce cabinet's Coin, Service and Test
+      // a GameCube pad's twelve buttons, or a Triforce cabinet's fifteen
       const bool held = f >= press[pi].first && f < press[pi].first + press[pi].count;
+      if (chimera_dolphin_triforce())
+      {
+        chimera_dolphin_set_triforce_control(press[pi].index / 15, press[pi].index % 15, held);
+        continue;
+      }
       // a Wii project's wire, as the sandbox's entry point reads it: 21
       // buttons a port, then the console's own
       if (wii)

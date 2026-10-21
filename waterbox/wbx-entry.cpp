@@ -237,8 +237,9 @@ static bool WiiAxisLive(int device, int a)
 // Which of the declared controls this machine has: a control belongs to a
 // port, and an empty port has none of them.
 // A Triforce cabinet declares its own panel: two players of a GameCube pad's
-// twelve buttons and then Coin, Service and Test - fifteen each - and their six
-// axes (chimera#148). Its two players are always there.
+// twelve buttons with Coin after Start, then Service and Test - fifteen each -
+// and their six axes (chimera#148, chimera#337). Its two players are always
+// there.
 static const int kTriforceButtons = 15;
 
 ECL_EXPORT int IsButtonActive(int32_t index)
@@ -272,12 +273,7 @@ ECL_EXPORT void SetButton(int32_t index, int32_t state)
 {
   if (chimera_dolphin_triforce())
   {
-    const int pad = index / kTriforceButtons, wire = index % kTriforceButtons;
-    // Coin, Service, Test in the declaration; Test, Service, Coin on the switch word
-    if (wire < 12)
-      chimera_dolphin_set_button(pad, wire, state);
-    else
-      chimera_dolphin_set_switch(pad, 14 - wire, state);
+    chimera_dolphin_set_triforce_control(index / kTriforceButtons, index % kTriforceButtons, state);
     return;
   }
   if (g_wii)

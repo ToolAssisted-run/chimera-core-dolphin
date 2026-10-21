@@ -394,8 +394,8 @@ if [ -n "$tf" ] && [ -f "$tf" ]; then
 	wbx --frames 120 --report 1 --settings '{"machine":"triforce"}' "$tf" > "$work/tfpl.txt"
 	if [ -s "$work/tfpl.txt" ] && cmp -s "$work/tfrr.txt" "$work/tfpl.txt"; then PASS "triforce rerecord leg - a save and reload around every frame changes nothing"
 	else FAIL "triforce rerecord leg"; fi
-	# the cabinet's Coin switch (panel index 12, P1 Coin) reaches the machine
-	wbx --frames 900 --report 900 --settings '{"machine":"triforce"}' --press 600:6:12 "$tf" > "$work/tfcoin.txt"
+	# the cabinet's Coin switch (panel index 6, P1 Coin, right after Start) reaches the machine
+	wbx --frames 900 --report 900 --settings '{"machine":"triforce"}' --press 600:6:6 "$tf" > "$work/tfcoin.txt"
 	tail -1 "$work/tfg.txt" > "$work/tfnocoin.txt"
 	if [ -s "$work/tfcoin.txt" ] && ! cmp -s "$work/tfcoin.txt" "$work/tfnocoin.txt"; then PASS "triforce coin leg - the Coin switch reaches the board"
 	else FAIL "triforce coin leg - a coin changed nothing"; fi
