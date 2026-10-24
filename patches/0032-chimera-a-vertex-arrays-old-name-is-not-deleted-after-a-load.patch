@@ -1,0 +1,24 @@
+diff --git a/Source/Core/VideoBackends/OGL/OGLNativeVertexFormat.cpp b/Source/Core/VideoBackends/OGL/OGLNativeVertexFormat.cpp
+--- a/Source/Core/VideoBackends/OGL/OGLNativeVertexFormat.cpp
++++ b/Source/Core/VideoBackends/OGL/OGLNativeVertexFormat.cpp
+@@ -54,12 +54,17 @@
+ 
+ // chimera: a fresh GL context after a load has none of the vertex arrays, and
+ // the format is kept - pipelines the shader cache makes again point at it - so
+-// its array is made again in place. The old name names nothing now; deleting
+-// it frees only the number.
++// its array is made again in place. The old name is not deleted. In the fresh
++// context it is either nothing or a name this rebuild has just handed out: a
++// state taken in another process (a project opened again, its greenzone read
++// back from disk) holds names this process never reserved, so the old name of
++// one format could be the new array of the format remade before it, and
++// deleting it left that format drawing through a deleted array, its vertex
++// colours read as black (chimera#367). A name left alone costs nothing and
++// goes with the context.
+ void GLVertexFormat::ChimeraRemake()
+ {
+   ProgramShaderCache::InvalidateVertexFormatIfBound(VAO);
+-  glDeleteVertexArrays(1, &VAO);
+   MakeVAO();
+ }
+ 

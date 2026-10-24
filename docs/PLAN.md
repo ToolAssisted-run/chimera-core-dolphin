@@ -797,3 +797,42 @@ published) and with the old context kept (today's Chimera): the gate 25 ok,
 2x; on the GTX 1060, Pro Rally 2002 rewound 8 times from 7800 to 7500 ends
 with System RAM, ARAM and the picture the same as a straight run, and the GPU
 holds 122 MB less with the fresh context.
+
+## A state loaded by a new process (chimera#367, 2026-10-24)
+
+Mario Kart Arcade GP's grey "Please call an attendant" screen drew black,
+with only its white text, the first time its project was opened again, and
+stayed that way. Opening a project again reads its greenzone back from disk
+into a new Chimera, so the machine comes back from a state another process
+took.
+
+- On every load the engine gives the core a fresh GL context and takes again
+  every GL name the core holds, so that a new object cannot get a number the
+  restored machine still uses. It knows those names by watching the core make
+  and delete them, so a new process knows only the names made since it
+  started, and none of the restored machine's.
+- The rebuild remade each vertex format's vertex array and deleted the old
+  array by its old name. In the new process the old name of one format was
+  the new array of a format remade just before it: in Mario Kart's case the
+  arrays of two formats with vertex colours were deleted, and those formats
+  drew through arrays that were gone, their colours read as black. The grey
+  screen is a flat quad with vertex colours.
+- Patch 0032 leaves the old name alone. In the fresh context it names nothing
+  of the core's, and it goes with the context.
+
+How it was found: loaded in the same process the frames after a load were
+exact (settle-probe, 20 of 20); loaded by a new process frame 2001 was
+already black. The software renderer did not show it, and printing each
+format's old and new array names in the rebuild showed the collision.
+
+Measured: the reporter's project, the state of frame 2000 loaded by a new
+process, frames 2001 and 2030 are grey as in the straight run, on the GTX
+1060 through Mesa's D3D12 driver (WSL). The new gate leg
+gl:load-in-new-process does the same with swiss on llvmpipe: frame 101
+drawn by a new process from the state of frame 100 equals the straight run's
+frame 101; with the published Development build bdca76c8 it does not.
+
+Not fixed here: the engine reserves only the names it saw made, so any other
+GL core whose rebuild deletes objects by their names from before the load
+can meet the same collision when a project is opened again. That is put to
+the owner (chimera#367).

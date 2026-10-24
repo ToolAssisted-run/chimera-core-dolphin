@@ -688,6 +688,41 @@ else
 			PASS "gl:rebuild-at-zero leg - a restore rebuilds the GL objects wherever it lands - $zero calls after frame 0, $two after frame 2"
 		fi
 	fi
+
+	# The gl:load-in-new-process leg (chimera#367): a state loaded by another
+	# process than the one that took it draws the frame after the load as the
+	# straight run does. That is what opening a project again does: its
+	# greenzone comes back from disk into a new Chimera. The engine reserves
+	# the GL names the core holds in the fresh context a load brings, but only
+	# the names it saw made, and a new process saw none of the restored
+	# machine's. The rebuild then handed out names the state still held, and
+	# deleting a vertex array by its old name deleted the one another vertex
+	# format had just been given: that format drew through a deleted array,
+	# its vertex colours read as black. Mario Kart Arcade GP's grey "call an
+	# attendant" screen drew black after its project was opened again; swiss
+	# shows the same in its menu. Patch 0032 leaves the old name alone. With
+	# the delete put back, the frame after the load differs here (measured on
+	# llvmpipe, 2026-10-24).
+	np="$work/newprocess"
+	mkdir -p "$np"
+	nprun() { # <out> <extra args...>
+		npout="$1"; shift
+		timeout 600 "$crun" "$cpkg" "$swiss" "$np/movie.txt" --settings '{"renderer":"opengl-hw"}' \
+			--gpu "$@" > "$npout" 2>&1 || true
+	}
+	timeout 600 "$crun" "$cpkg" "$swiss" "$gz/none.txt" --settings '{"renderer":"opengl-hw"}' \
+		--gpu --record "$np/movie.txt" --frames 120 > "$np/record.log" 2>&1 || true
+	nprun "$np/straight.log" --frames 102 --save-state 100="$np/s100.state" --screenshot 101="$np/straight-101.tga"
+	nprun "$np/loaded.log" --render-every-frame --state "$np/s100.state" --frames 2 --screenshot 1="$np/loaded-101.tga"
+	if grep -q "^chimera gl: no context" "$np/straight.log"; then
+		SKIP "gl:load-in-new-process leg - this build or this machine gives the bridge no GL context"
+	elif [ ! -s "$np/straight-101.tga" ] || [ ! -s "$np/loaded-101.tga" ]; then
+		FAIL "gl:load-in-new-process leg - a picture is missing (see $np/straight.log and $np/loaded.log)"
+	elif ! cmp -s "$np/straight-101.tga" "$np/loaded-101.tga"; then
+		FAIL "gl:load-in-new-process leg - frame 101 drawn by a new process from the state of frame 100 is not the straight run's frame 101"
+	else
+		PASS "gl:load-in-new-process leg - a state loaded by a new process draws the next frame as the straight run did"
+	fi
 fi
 
 # The gl:picture-after-load leg (chimera issue 190): the frames drawn right
