@@ -13,6 +13,29 @@ swiss="$root/tests/roms/swiss_r2092.dol"
 disc="${DOLPHIN_DISC:-$root/tests/roms-local/Mortal Kombat - Deadly Alliance.iso}"
 wiidisc="${DOLPHIN_WII_DISC:-$root/tests/roms-local/Dragon Ball Z - Budokai Tenkaichi 3 (USA) (Rev 1).iso}"
 work="$here/tests/work"
+# A game runs only in a project (Chimera, 2026-10-26): crun_game <package>
+# <game> <movie> [chimera-run's options] makes one of the game and the movie,
+# with any --settings and --firmware given, and runs it with the rest
+# (each run under CRUN_TIMEOUT seconds when it is set).
+crun_quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+crun_game() {
+	cg_pkg="$1" cg_game="$2" cg_movie="$3" cg_made=""
+	shift 3
+	cg_n=$#
+	while [ "$cg_n" -gt 0 ]; do
+		case "$1" in
+			--settings) cg_made="$cg_made --settings $(crun_quote "$2")"; shift 2; cg_n=$((cg_n - 2)); continue ;;
+			--settings=*) cg_made="$cg_made --settings $(crun_quote "${1#--settings=}")"; shift; cg_n=$((cg_n - 1)); continue ;;
+			--firmware) cg_made="$cg_made --firmware $(crun_quote "$2")"; set -- "$@" "$1" "$2"; shift 2; cg_n=$((cg_n - 2)); continue ;;
+			--firmware=*) cg_made="$cg_made --firmware $(crun_quote "${1#--firmware=}")"; set -- "$@" "$1"; shift; cg_n=$((cg_n - 1)); continue ;;
+		esac
+		set -- "$@" "$1"; shift; cg_n=$((cg_n - 1))
+	done
+	cg_dir="$(mktemp -d "$work/project.XXXXXX")"
+	eval "timeout \"\${CRUN_TIMEOUT:-0}\" \"\$crun\" --new-project \"\$cg_dir/game.chimeraProject\" \"\$cg_pkg\" \"\$cg_game\" \"\$cg_movie\" $cg_made" \
+		> "$cg_dir/make.log" 2>&1 || { echo "chimera-run: no project made: $(tail -1 "$cg_dir/make.log")" >&2; return 2; }
+	timeout "${CRUN_TIMEOUT:-0}" "$crun" --project "$cg_dir/game.chimeraProject" "$cg_pkg" --files "$(dirname "$cg_game")" "$@"
+}
 pass=0; fail=0; skip=0
 
 say() { printf '%s\n' "$*"; }
@@ -658,7 +681,7 @@ else
 	printf '[Input]\nLogKey:#\n' > "$gz/none.txt"
 	glrun() { # <movie> <out> <extra args...>
 		glmovie="$1"; glout="$2"; shift 2
-		CHIMERA_GL_TRACE=1 CHIMERA_GL_STATEAUDIT=1 timeout 600 "$crun" "$cpkg" \
+		CHIMERA_GL_TRACE=1 CHIMERA_GL_STATEAUDIT=1 CRUN_TIMEOUT=600 crun_game "$cpkg" \
 			"$swiss" "$glmovie" --settings '{"renderer":"opengl-hw"}' \
 			--frames 60 --gpu "$@" > "$glout" 2>&1 || true
 	}
@@ -707,10 +730,10 @@ else
 	mkdir -p "$np"
 	nprun() { # <out> <extra args...>
 		npout="$1"; shift
-		timeout 600 "$crun" "$cpkg" "$swiss" "$np/movie.txt" --settings '{"renderer":"opengl-hw"}' \
+		CRUN_TIMEOUT=600 crun_game "$cpkg" "$swiss" "$np/movie.txt" --settings '{"renderer":"opengl-hw"}' \
 			--gpu "$@" > "$npout" 2>&1 || true
 	}
-	timeout 600 "$crun" "$cpkg" "$swiss" "$gz/none.txt" --settings '{"renderer":"opengl-hw"}' \
+	CRUN_TIMEOUT=600 crun_game "$cpkg" "$swiss" "$gz/none.txt" --settings '{"renderer":"opengl-hw"}' \
 		--gpu --record "$np/movie.txt" --frames 120 > "$np/record.log" 2>&1 || true
 	nprun "$np/straight.log" --frames 102 --save-state 100="$np/s100.state" --screenshot 101="$np/straight-101.tga"
 	nprun "$np/loaded.log" --render-every-frame --state "$np/s100.state" --frames 2 --screenshot 1="$np/loaded-101.tga"
