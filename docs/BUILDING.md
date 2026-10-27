@@ -44,10 +44,13 @@ builds Chimera itself):
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
   meson ninja-build build-essential cmake pkg-config python3 \
-  mono-complete xvfb \
   libgl1-mesa-dev libx11-dev libxext-dev libasound2-dev \
   libegl1 libgl1-mesa-dri libegl-mesa0
 ```
+
+Chimera's window needs Qt 6.12 as well. Chimera's `tools/ci-chimera.sh`
+installs it (from Qt's own archives, with aqt) and builds Chimera; the
+workflow keeps Qt in `~/qt` between runs.
 
 **Toolchains.**
 
@@ -61,12 +64,6 @@ sudo apt-get install -y --no-install-recommends \
   carry the host half of the GPU bridge (`waterbox/gl-host.c`). The Mesa
   packages above give them a GL context on a machine with no GPU; the
   workflow's GPU leg draws on Mesa's llvmpipe.
-- .NET SDK 8.0, for the frontend gate only. CI uses `actions/setup-dotnet@v4`
-  with `dotnet-version: '8.0'`. Chimera's README gives the manual equivalent:
-  `curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0`.
-  It also says distro-built SDKs omit the WindowsDesktop targets the frontend
-  needs.
-- Mono and Xvfb (`mono-complete`, `xvfb`), for the frontend gate only.
 - No Rust.
 
 **What the scripts fetch or build themselves.**
@@ -270,15 +267,15 @@ is a file a person puts in Chimera's `Cores` folder.
 - **A Chimera source checkout.** The cores folder is `<chimera>/build/Cores/`,
   and `build-package.sh -r <chimera>` has already written the package there.
 - **A release bundle.** Copy `dolphin.chimeraCore` into the `Cores` folder
-  beside `Chimera.exe`, or into the folder chosen with Change folder... in
-  File > Core Manager.
+  beside Chimera's program, or into the folder chosen with Change folder... in
+  Tools > Core Manager....
 - **Without building.** Download the package from this repository's Releases
   page, https://github.com/ToolAssisted-run/chimera-core-dolphin/releases, and
   put it in the same folder. CI publishes a rolling `dev` release on every
   green push to `main` and a dated `nightly-YYYY-MM-DD` release from the
   scheduled run, when `main` moved since the last one.
 
-File > Core Manager lists what is in the folder; Refresh List rescans it.
+Tools > Core Manager... lists what is in the folder; Refresh List rescans it.
 
 A package's version is the commit it was built from. A hand-built package
 carries `+local` and is for testing; Chimera's publishing script refuses to
@@ -342,15 +339,11 @@ the bridge no GL context.
 
 ### The frontend gate
 
-It runs the package inside Chimera itself, headless under Mono. Build Chimera
-first, as the workflow does:
+It runs the package inside Chimera's window, run headless: it needs no
+display. Build Chimera first, with its window, as the workflow does:
 
 ```sh
-cd "$chimera"
-meson setup build/meson-linux --prefix "$PWD/build" --libdir dll
-meson compile -C build/meson-linux
-meson install -C build/meson-linux
-dotnet build source/gui/Chimera.sln -c Release /nodeReuse:false -p:UseSharedCompilation=false
+"$chimera"/tools/ci-chimera.sh
 ```
 
 Then, from this repository, with the package installed:
@@ -362,8 +355,8 @@ Then, from this repository, with the package installed:
 Options: `--chimera-root <path>` and `--frames N` (default 200). It needs
 `waterbox/bin/run-wbx` and `waterbox/bin/core.wbx`, which `build-package.sh`
 has built. Its reference is `run-wbx`, not the native build: the core gate
-already holds those two equal. When `DISPLAY` is not set it starts its own
-Xvfb. Logs and dumps go to `waterbox/tests/work/`.
+already holds those two equal. Logs and dumps go to
+`waterbox/tests/work/`.
 
 | Check | What it holds | Skipped without |
 | --- | --- | --- |
@@ -434,8 +427,6 @@ a GPU `opengl-hw` falls back to `software`.
 - **The frontend gate stops with `Chimera not built`, `package not installed`
   or `run-wbx not built`.** Build Chimera, or run `build-package.sh`, which
   builds `run-wbx` too.
-- **`Xvfb not found (apt install xvfb)`.** The frontend gate starts its own X
-  display when `DISPLAY` is not set, and needs `xvfb` for it.
 - **`docs/PLAN.md` describes a build without CMake, from a curated
   `waterbox/sources.mk`.** The scripts in this repository build with
   Dolphin's CMake, as described here. Follow the scripts.

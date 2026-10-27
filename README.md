@@ -23,8 +23,8 @@ never be committed.
 Chimera ships no cores and downloads nothing. Download the `.chimeraCore`
 package from this repository's
 [Releases](https://github.com/ToolAssisted-run/chimera-core-dolphin/releases)
-page, or build it, and put it in the `Cores` folder beside `Chimera.exe`;
-File > Core Manager lists what is there. The same file runs on Linux and on
+page, or build it, and put it in the `cores` folder beside Chimera's program;
+Tools > Core Manager... lists what is there. The same file runs on Linux and on
 Windows.
 
 To build it you need a Chimera checkout with miniBox built; then

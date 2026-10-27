@@ -81,8 +81,8 @@ MINIBOX_DIR="$mb" ./waterbox/build-core.sh -m "$mb"
 `build-package.sh -r "$chimera"` writes
 `$chimera/build/Cores/dolphin.chimeraCore`: the cores folder of a Chimera
 source checkout, so nothing else is needed there. For a release bundle, copy
-the file into the `Cores` folder beside `Chimera.exe` (or the folder set in
-File > Core Manager > Change folder...). File > Core Manager lists the folder;
+the file into the `cores` folder beside Chimera's program (or the folder set in
+Tools > Core Manager... > Change folder...). Tools > Core Manager... lists the folder;
 Refresh List rescans it. Chimera downloads nothing. The same file runs on
 Linux and on Windows.
 
@@ -103,8 +103,9 @@ Linux and on Windows.
 - `gl:rebuild-at-zero` runs only when `$CHIMERA_ROOT` (or `../chimera`,
   `$HOME/chimera`) has `build/meson-linux/chimera-run` and the installed
   package. CI skips it. Run it when you touch the OpenGL path.
-- The frontend gate needs Chimera built (natives and the .NET solution), the
-  package installed, Mono and Xvfb; see `docs/BUILDING.md`. Run it when you
+- The frontend gate needs Chimera built with its window (Chimera's
+  `tools/ci-chimera.sh` builds it) and the package installed; the window runs
+  headless and needs no display. See `docs/BUILDING.md`. Run it when you
   touch `waterbox.config`, `default_keybinds.json` or `file_slots.json`.
 - The core gate empties `waterbox/tests/work/`, which the frontend gate also
   uses. Do not run the two at once.
