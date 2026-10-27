@@ -1,6 +1,6 @@
 #!/bin/bash
-# The frontend half of the gate: load the Dolphin package in Chimera (under
-# Mono, on a private Xvfb display), boot swiss for a fixed number of frames
+# The frontend half of the gate: load the Dolphin package in Chimera's window
+# (run headless: no display is needed), boot swiss for a fixed number of frames
 # with nothing pressed, and require the machine's memory to be byte-identical
 # to the sandbox reference (which the core gate already holds equal to the
 # native build). Then the same over a commercial disc, a machine-shaping
@@ -33,14 +33,14 @@ fi
 	echo "chimera checkout not found; pass --chimera-root <path>" >&2; exit 1; }
 chimera_root="$(cd "$chimera_root" && pwd)"
 
-emu_exe="$chimera_root/build/Chimera.exe"
+chimera_exe="$chimera_root/build/meson-linux/source/ui/chimera"
 package="$chimera_root/build/Cores/dolphin.chimeraCore"
 runwbx="$wb/bin/run-wbx"
 wbx="$wb/bin/core.wbx"
 sys="$root/extern/dolphin/Data/Sys"
 swiss="$root/tests/roms/swiss_r2092.dol"
 disc="${DOLPHIN_DISC:-$root/tests/roms-local/Mortal Kombat - Deadly Alliance.iso}"
-[ -f "$emu_exe" ] || { echo "Chimera not built: $emu_exe" >&2; exit 1; }
+[ -x "$chimera_exe" ] || { echo "Chimera not built: $chimera_exe" >&2; exit 1; }
 [ -f "$package" ] || { echo "package not installed: $package (run ../build-package.sh)" >&2; exit 1; }
 [ -x "$runwbx" ] || { echo "run-wbx not built (../build-core.sh)" >&2; exit 1; }
 
@@ -61,29 +61,11 @@ printf "%-28s %-9s %s\n" "-----" "------" "------"
 work="$here/work"
 mkdir -p "$work"
 
-export LD_LIBRARY_PATH="$chimera_root/build/dll:$chimera_root/build:/usr/lib/x86_64-linux-gnu"
-export MONO_CRASH_NOFILE=1 MONO_WINFORMS_XIM_STYLE=disabled ALSOFT_DRIVERS=null
-xvfb_pid=""
-cleanup() { [ -n "$xvfb_pid" ] && kill "$xvfb_pid" 2>/dev/null; }
-trap cleanup EXIT
-if [ -z "${DISPLAY:-}" ]; then
-	command -v Xvfb >/dev/null || { echo "Xvfb not found (apt install xvfb)" >&2; exit 1; }
-	for n in 90 91 92 93 94 95 96; do
-		if [ ! -e "/tmp/.X11-unix/X$n" ]; then
-			Xvfb ":$n" -screen 0 640x480x24 -nolisten tcp & xvfb_pid=$!
-			export DISPLAY=":$n"; break
-		fi
-	done
-	sleep 1
-fi
-
-config="$work/config.ini"
-if [ ! -f "$config" ]; then
-	( cd "$chimera_root" && timeout 120 mono "$emu_exe" --headless "--config=$config" \
-		"--lua=$here/exit.lua" ) > "$work/bootstrap.log" 2>&1
-	[ -f "$config" ] || { echo "config bootstrap failed (see $work/bootstrap.log)" >&2; exit 1; }
-fi
-sed -i 's/"DispMethod": [0-9]/"DispMethod": 1/' "$config"
+# Chimera's window, run headless: the cores installed in the checkout, its
+# settings, cache and recovery files the run's own, and nothing carried over
+# from a Chimera installed on this machine
+export ALSOFT_DRIVERS=null CHIMERA_CORES_DIR="$chimera_root/build/Cores" CHIMERA_QT_CACHE="$work/qt-cache" CHIMERA_QT_RECOVERY="$work/qt-recovery" \
+	CHIMERA_QT_HASHES="$work/qt-file-hashes.txt" CHIMERA_QT_CHIMERA_SETTINGS="$work/no-chimera-config.ini"
 
 SLICE=1048576
 
@@ -101,7 +83,7 @@ run_frontend() {
 	[ -n "$shot" ] && rm -f "$shot"
 	local project
 	project="$(game_project "$tag" "$cfg" "$package" "$romarg")" || { cp "$work/projects/$tag.make.log" "$work/$tag.log"; return 1; }
-	( cd "$chimera_root" && MINIHAWK_JOB="$job" timeout 900 mono "$emu_exe" --headless \
+	( cd "$chimera_root" && MINIHAWK_JOB="$job" timeout 900 "$chimera_exe" --headless \
 		"--config=$cfg" "--core=$package" \
 		"--lua=$here/frontend-ram.lua" "--project=$project" ) > "$work/$tag.log" 2>&1
 	[ -f "$work/$tag.meta.txt" ] && grep -q "^status=OK" "$work/$tag.meta.txt"
@@ -123,7 +105,7 @@ reference_ram() {
 # of its game with chimera-run --new-project, holding the settings
 # settings_config was given for the config it runs with.
 declare -A settings_of
-settings_config() { python3 "$here/settings-config.py" "$config" "$1" "$2"; settings_of["$1"]="$2"; }
+settings_config() { python3 "$here/settings-config.py" "$1" "$2"; settings_of["$1"]="$2"; }
 crun="$chimera_root/build/dll/chimera-run"
 game_project() { # tag, config, package, game: prints the project's path
 	local dir="$work/projects" settings="${settings_of[$2]:-}"
@@ -141,10 +123,10 @@ game_project() { # tag, config, package, game: prints the project's path
 # renderer pinned to software: these legs prove the frontend's plumbing against
 # the software sandbox reference; the default renderer is the GPU, whose RAM
 # effects are the gpu tooling's business, not this comparison's
-settings_config "$work/config.base.ini" '{"renderer": "software"}'
+settings_config "$work/settings.base.json" '{"renderer": "software"}'
 if ! reference_ram "base" "$swiss"; then
 	report "game:frontend" FAIL "reference runner error (see tests/work/ref.base.log)"
-elif ! run_frontend "base" "$work/config.base.ini" "$frames" "$work/base.png" "$swiss"; then
+elif ! run_frontend "base" "$work/settings.base.json" "$frames" "$work/base.png" "$swiss"; then
 	report "game:frontend" FAIL "no OK meta (see tests/work/base.log)"
 elif ! cmp -s "$work/ref.base.ram.bin" "$work/base.ram.bin"; then
 	report "game:frontend" FAIL "System RAM differs from the sandbox reference"
@@ -158,7 +140,7 @@ fi
 if [ -f "$disc" ]; then
 	if ! reference_ram "disc" "$disc"; then
 		report "disc:frontend" FAIL "reference runner error (see tests/work/ref.disc.log)"
-	elif ! run_frontend "disc" "$work/config.base.ini" "$frames" "" "$disc"; then
+	elif ! run_frontend "disc" "$work/settings.base.json" "$frames" "" "$disc"; then
 		report "disc:frontend" FAIL "no OK meta (see tests/work/disc.log)"
 	elif ! cmp -s "$work/ref.disc.ram.bin" "$work/disc.ram.bin"; then
 		report "disc:frontend" FAIL "System RAM differs from the sandbox reference"
@@ -179,7 +161,7 @@ if [ -f "$disc" ]; then
 	ref_lag="$(grep '^frame' "$work/ref.lag.log" | tail -1 | sed -n 's/.* lag \([0-9]*\)$/\1/p')"
 	if [ -z "$ref_lag" ] || [ "$ref_lag" -eq 0 ] || [ "$ref_lag" -ge 600 ]; then
 		report "lag:frontend" FAIL "the sandbox counted ${ref_lag:-nothing} lag frames of 600 (see tests/work/ref.lag.log)"
-	elif ! run_frontend "lag" "$work/config.base.ini" 600 "" "$disc"; then
+	elif ! run_frontend "lag" "$work/settings.base.json" 600 "" "$disc"; then
 		report "lag:frontend" FAIL "no OK meta (see tests/work/lag.log)"
 	elif [ "$(sed -n 's/^lag=//p' "$work/lag.meta.txt")" != "$ref_lag" ]; then
 		report "lag:frontend" FAIL "Chimera counted $(sed -n 's/^lag=//p' "$work/lag.meta.txt") lag frames, the sandbox $ref_lag"
@@ -195,12 +177,12 @@ fi
 # memory must (a) match a reference run with the same setting and (b) differ
 # from the with-card machine - otherwise the knob turned nothing.
 if [ -f "$disc" ]; then
-	settings_config "$work/config.nocard.ini" '{"memcard_a": false, "renderer": "software"}'
+	settings_config "$work/settings.nocard.json" '{"memcard_a": false, "renderer": "software"}'
 	if ! reference_ram "nocard" "$disc" '{"memcard_a":false}'; then
 		report "settings:memcard" FAIL "reference runner error (see tests/work/ref.nocard.log)"
 	elif cmp -s "$work/ref.nocard.ram.bin" "$work/ref.disc.ram.bin"; then
 		report "settings:memcard" FAIL "the setting changes nothing in $frames frames"
-	elif ! run_frontend "nocard" "$work/config.nocard.ini" "$frames" "" "$disc"; then
+	elif ! run_frontend "nocard" "$work/settings.nocard.json" "$frames" "" "$disc"; then
 		report "settings:memcard" FAIL "no OK meta (see tests/work/nocard.log)"
 	elif ! cmp -s "$work/ref.nocard.ram.bin" "$work/nocard.ram.bin"; then
 		report "settings:memcard" FAIL "RAM differs from the no-card reference"
@@ -211,11 +193,22 @@ else
 	report "settings:memcard" SKIP "no commercial disc in tests/roms-local"
 fi
 
-# --- 4. the package's bindings became the frontend's defaults ---------------
-if out="$(python3 "$here/check-keybinds.py" "$work/config.base.ini" "$wb/default_keybinds.json" "GameCube Controller" 2>&1)"; then
-	report "keybinds" PASS "$out"
+# --- the bindings the package ships are the machine's when nobody changed them
+# (the window keeps only the keys a person changed; fresh settings have none)
+settings_config "$work/settings.keys.json" '{}'
+keysproj="$(game_project "keys" "$work/settings.keys.json" "$package" "$swiss")" || cp "$work/projects/keys.make.log" "$work/keys.log"
+printf 'out=%s/keys.controls.json\nmeta=%s/keys.meta.txt\n' "$work" "$work" > "$work/job.keys.txt"
+rm -f "$work/keys.controls.json" "$work/keys.meta.txt"
+( cd "$chimera_root" && MINIHAWK_JOB="$work/job.keys.txt" timeout 900 "$chimera_exe" --headless \
+	"--config=$work/settings.keys.json" "--project=$keysproj" \
+	"--lua=$here/dump-controls.lua" ) >> "$work/keys.log" 2>&1
+if [ ! -f "$work/keys.meta.txt" ] || ! grep -q "^status=OK" "$work/keys.meta.txt"; then
+	report "keybinds" FAIL "run did not report OK (see tests/work/keys.log)"
+elif python3 "$here/check-keybinds.py" "$work/keys.controls.json" \
+	"$wb/default_keybinds.json" "GameCube Controller" > "$work/keys.txt" 2>&1; then
+	report "keybinds" PASS "$(cat "$work/keys.txt")"
 else
-	report "keybinds" FAIL "$out"
+	report "keybinds" FAIL "$(head -1 "$work/keys.txt")"
 fi
 
 echo
