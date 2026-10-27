@@ -643,11 +643,10 @@ script run on lavapipe, which is not a graphics card.
 ## 2026-10-14: the default bindings name keys Chimera sends
 
 The Triforce panel's Coin and Service were on D5 and D9; they are on Number5
-and Number9. Chimera hands a key to the bindings under one name: the name its
-DistinctKeyNameOverrides gives it ("Number1", "Enter", "Backtick",
-"KeypadAdd") or else its DistinctKey name ("Up"); and unless told otherwise it
+and Number9. Chimera hands a key to the bindings under one name: the name Chimera gives it ("Number1", "Enter", "Backtick",
+"KeypadAdd") or else its own name ("Up"); and unless told otherwise it
 reads the left and right Shift, Ctrl and Alt as one key each, "Shift", "Ctrl"
-and "Alt" (Input.cs, Config.MergeLAndRModifierKeys). A default binding to
+and "Alt". A default binding to
 another name never fired, so those controls shipped unbound on the keyboard.
 Checked on a virtual X display: with 1, Return, left Shift and Up held, Chimera reports
 Number1, Enter, Shift and Up. Left and right names stay beside the merged one,
