@@ -48,6 +48,8 @@ cp "$here/bin/core.wbx" "$staging/core.wbx"
 cp "$here/waterbox.config" "$staging/waterbox.config"
 cp "$here/default_keybinds.json" "$staging/default_keybinds.json"
 cp "$here/file_slots.json" "$staging/file_slots.json"
+# the texts a person reads, a table per language (chimera docs/translations.md)
+cp -r "$here/languages" "$staging/languages"
 
 # The Data/Sys slice the machine reads: per-game settings (they change
 # machine behavior, so leaving them out would diverge from stock dolphin)

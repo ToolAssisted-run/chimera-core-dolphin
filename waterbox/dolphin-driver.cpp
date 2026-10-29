@@ -72,6 +72,11 @@
 
 #include "dolphin-driver.h"
 
+/* A text a person reads is a key of languages/en.json, each of its
+ * arguments after a TEXT_ARG (chimera docs/translations.md). TEXT_ARG is a
+ * string of its own so the byte after it is never read as more of its hex. */
+#define TEXT_ARG "\x1f"
+
 static std::string s_error;
 
 // ---- the input wire -------------------------------------------------------
@@ -565,15 +570,14 @@ static bool SeedWiiSaves()
     return true;
   if (!Sys().IsWii())
   {
-    s_error = "the Save data slot holds a .zip, which is a Wii's saves; a GameCube project "
-              "takes the memory card image (.raw) Export Save Data writes";
+    s_error = "error.wii_saves_on_gamecube";
     return false;
   }
   auto index = std::make_shared<chimera::zip_index>();
   std::string error;
   if (!chimera::zip_open(s_wii_savedata_zip, *index, error))
   {
-    s_error = "the save data could not be read as a zip: " + error;
+    s_error = std::string("error.save_not_zip" TEXT_ARG) + error;
     return false;
   }
 
@@ -586,7 +590,7 @@ static bool SeedWiiSaves()
   const auto owner = fs->GetMetadata(PID_KERNEL, PID_KERNEL, data_dir);
   if (!owner || owner->is_file)
   {
-    s_error = "the game has no data directory in NAND to put its saves in (" + data_dir + ")";
+    s_error = std::string("error.no_data_dir" TEXT_ARG) + data_dir;
     return false;
   }
 
@@ -598,15 +602,14 @@ static bool SeedWiiSaves()
       continue;  // a directory entry: the files under it make it
     if (e.path.compare(0, prefix.size(), prefix) != 0 || e.path.find("..") != std::string::npos)
     {
-      s_error = "the save data holds '" + e.path + "', which is not a save of this game - every "
-                "entry is " + prefix + "<file>, as Export Save Data writes them for this game";
+      s_error = std::string("error.save_not_this_game" TEXT_ARG) + e.path + TEXT_ARG + prefix;
       return false;
     }
     std::vector<u8> bytes(e.size);
     chimera::zip_stream stream(index, i);
     if (stream.read_at(0, bytes.data(), e.size) != e.size)
     {
-      s_error = "the save data's '" + e.path + "' could not be unpacked";
+      s_error = std::string("error.save_not_unpacked" TEXT_ARG) + e.path;
       return false;
     }
     const std::string path = e.path.substr(4);  // "/title/.../data/..."
@@ -619,14 +622,14 @@ static bool SeedWiiSaves()
     const auto file = fs->CreateAndOpenFile(owner->uid, owner->gid, path, owner->modes);
     if (!file || !file->Write(bytes.data(), bytes.size()))
     {
-      s_error = "the save data's '" + e.path + "' could not be written to NAND";
+      s_error = std::string("error.save_not_written" TEXT_ARG) + e.path;
       return false;
     }
     files++;
   }
   if (files == 0)
   {
-    s_error = "the save data zip holds no files";
+    s_error = "error.save_empty";
     return false;
   }
   fprintf(stderr, "[driver] seeded %zu Wii save file(s) into %s\n", files, data_dir.c_str());
@@ -856,7 +859,7 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
   auto boot = BootParameters::GenerateFromFile(game_path);
   if (!boot)
   {
-    s_error = "could not make boot parameters from the given path";
+    s_error = "error.no_boot_parameters";
     return 0;
   }
   // A disc image boots from the drive: it is the first of the project's
@@ -879,12 +882,12 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
   // the shutdown transfer asserting.
   if (!BootManager::BootCore(Sys(), std::move(boot), wsi))
   {
-    s_error = "BootManager::BootCore refused";
+    s_error = "error.boot_refused";
     return 0;
   }
   if (!WaitForState(Core::State::Paused))
   {
-    s_error = "the machine tore down during boot (see log)";
+    s_error = "error.torn_down";
     // it is down, but not put away: its threads outlive Init and a joinable
     // one met by a destructor at exit is std::terminate - a failed .wad
     // install ended in a core dump instead of this load error (chimera#148)
@@ -898,8 +901,7 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
     const char* booted = Sys().IsWii() ? "Wii" : Sys().IsTriforce() ? "Triforce" : "GameCube";
     if (strcmp(declared, booted) != 0)
     {
-      s_error = std::string("the project says ") + declared + ", but this image boots a " + booted +
-                " - pick " + booted + " in the New Project wizard's System box";
+      s_error = std::string("error.wrong_machine" TEXT_ARG) + declared + TEXT_ARG + booted;
       return RefuseRunningMachine();
     }
   }
@@ -908,9 +910,7 @@ int chimera_dolphin_init(const char* user_dir, const char* sys_dir, const char* 
   {
     if (IsWiiDevice(s_port_device[i]) && !Sys().IsWii())
     {
-      s_error = "port " + std::to_string(i + 1) +
-                " has a Wii controller, and this is a GameCube game: a GameCube has only GameCube "
-                "controllers";
+      s_error = std::string("error.wii_controller" TEXT_ARG) + std::to_string(i + 1);
       return RefuseRunningMachine();
     }
   }
@@ -1609,8 +1609,7 @@ const char* chimera_dolphin_renderer_refusal(void)
 {
   if (s_renderer_vulkan &&
       !(chimera_dolphin_vulkan_bridge_present && chimera_dolphin_vulkan_bridge_present()))
-    return "the renderer setting is vulkan-hw, and no Vulkan was handed over (this computer may "
-           "have no Vulkan driver, or this Chimera is older than its Vulkan bridge).";
+    return "error.no_vulkan_bridge";  // a key of languages/en.json
   return nullptr;
 }
 

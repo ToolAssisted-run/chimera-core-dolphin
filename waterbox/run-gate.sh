@@ -204,7 +204,7 @@ else PASS "options:config leg - all nine options reach dolphin's config, and uns
 missed=""
 for key in mmu widescreen_hack internal_resolution msaa ssaa anisotropy texture_filtering texture_cache gpu_texture_decoding; do
 	"$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" --frames 1 --settings "{\"$key\":\"bogus\"}" "$swiss" 2>&1 \
-		| grep -q "setting $key: unknown value" || missed="$missed $key"
+		| grep -q "error.bad_setting[^a-z]$key[^a-z]bogus" || missed="$missed $key"
 done
 if [ -n "$missed" ]; then FAIL "options:names leg - the sandbox never read:$missed"
 else PASS "options:names leg - the sandbox reads every declared option (a bogus value is a load error naming it)"; fi
@@ -319,8 +319,8 @@ import sys, zipfile
 with zipfile.ZipFile(sys.argv[1] + "/nobody.zip", "w") as z:
     z.writestr("nand/title/00010000/00000000/data/x.dat", b"x")
 PYZIP
-	refusal="$("$here/obj-native/run-native" --sys "$sys" --user "$work/wr" --machine wii --wii-savedata "$work/nobody.zip" --frames 1 "$wiidisc" 2>&1 | grep -o 'every entry is nand/title/[0-9a-f]*/[0-9a-f]*/data/')"
-	boxref="$("$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" --frames 1 --settings '{"machine":"wii"}' --save nobody.zip="$work/nobody.zip" "$wiidisc" 2>&1 | grep -o 'every entry is nand/title/[0-9a-f]*/[0-9a-f]*/data/')"
+	refusal="$("$here/obj-native/run-native" --sys "$sys" --user "$work/wr" --machine wii --wii-savedata "$work/nobody.zip" --frames 1 "$wiidisc" 2>&1 | grep -o 'error.save_not_this_game.*nand/title/[0-9a-f]*/[0-9a-f]*/data/')"
+	boxref="$("$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" --frames 1 --settings '{"machine":"wii"}' --save nobody.zip="$work/nobody.zip" "$wiidisc" 2>&1 | grep -o 'error.save_not_this_game.*nand/title/[0-9a-f]*/[0-9a-f]*/data/')"
 	if [ -z "$refusal" ] || [ "$refusal" != "$boxref" ]; then FAIL "wii save refusal leg - another game's save was not refused the same way in both flavors"
 	else
 		PASS "wii save refusal leg - another game's save is a load error, native == sandbox"
@@ -384,7 +384,7 @@ PYZIP
 	cmp -s "$work/wr0.txt" "$work/wc0.txt" && why="$why the Classic Controller changed nothing;"
 	cmp -s "$work/wc0.txt" "$work/wca.txt" && why="$why the Classic Controller's a changed nothing;"
 	cmp -s "$work/wrag.txt" "$work/wrar.txt" || why="$why a state around every frame changed a Wii Remote run;"
-	gcref="$("$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" --frames 1 --settings '{"port1":"wii-remote"}' "$swiss" 2>&1 | grep -o 'has a Wii controller, and this is a GameCube game')"
+	gcref="$("$here/bin/run-wbx" "$here/bin/core.wbx" --sys "$sys" --frames 1 --settings '{"port1":"wii-remote"}' "$swiss" 2>&1 | grep -o 'error.wii_controller')"
 	[ -n "$gcref" ] || why="$why a GameCube game took a Wii Remote;"
 	if [ -z "$why" ]; then
 		PASS "wii controllers leg - a Wii Remote, one with a Nunchuk and one with a Classic Controller are each another machine, and A, C and a, the pointer, Shake and the tilt reach the game, native == sandbox; a state around every frame changes nothing; a GameCube game refuses a Wii Remote"
@@ -535,7 +535,7 @@ vkw() { # <name> <run-wbx arguments...>: frames in $work/vk-<name>.txt, the rest
 vk_set='{"renderer":"vulkan-hw"}'
 vkw base --settings "$vk_set" --frames 120 --report 1 --screenshot "$work/vk-120.tga"
 vk_card="$(grep -o 'vulkan bridge: .*(Vulkan [^)]*)' "$work/vk-base.err" | head -1 | cut -c16-)"
-if grep -q 'no Vulkan was handed over' "$work/vk-base.err"; then
+if grep -q 'error.no_vulkan_bridge' "$work/vk-base.err"; then
 	SKIP "vk legs - this computer handed the core no Vulkan ($(grep -m1 '^vulkan bridge:' "$work/vk-base.err" | cut -c1-100)); would prove Dolphin's Vulkan renderer draws, and comes through a state load"
 else
 	refused="$(grep -c 'calls were refused' "$work/vk-base.err")"
@@ -786,11 +786,12 @@ for palrenderer in opengl-hw vulkan-hw; do
 	else
 		pal="$work/afterload-$palrenderer"
 		mkdir -p "$pal"
+		crun="$chimera_root/build/meson-linux/chimera-run"
+		cpkg="$chimera_root/build/Cores/dolphin.chimeraCore"
 		printf '[Input]\nLogKey:#\n' > "$pal/none.txt"
 		palrun() { # <movie> <out> <internal resolution> <extra args...>
 			palmovie="$1"; palout="$2"; palres="$3"; shift 3
-			CHIMERA_PICTURE_TRACE=1 timeout 600 "$chimera_root/build/meson-linux/chimera-run" \
-				"$chimera_root/build/Cores/dolphin.chimeraCore" "$swiss" "$palmovie" \
+			CHIMERA_PICTURE_TRACE=1 CRUN_TIMEOUT=600 crun_game "$cpkg" "$swiss" "$palmovie" \
 				--settings "{\"renderer\":\"$palrenderer\",\"internal_resolution\":\"$palres\"}" --frames 70 "$@" > "$palout" 2>&1 || true
 		}
 		exact() { grep -c ": 0.00% of pixels differ, 0.00% by more than 8 (largest 0)" "$1"; }

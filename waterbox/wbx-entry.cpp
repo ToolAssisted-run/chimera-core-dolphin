@@ -19,6 +19,11 @@
 
 #include "dolphin-driver.h"
 
+/* A text a person reads is a key of languages/en.json, each of its
+ * arguments after a TEXT_ARG (chimera docs/translations.md). TEXT_ARG is a
+ * string of its own so the byte after it is never read as more of its hex. */
+#define TEXT_ARG "\x1f"
+
 static char g_loadError[512];
 
 #ifdef CHIMERA_GL_BRIDGE
@@ -123,7 +128,7 @@ ECL_EXPORT int Init(void)
     char val[24];
     if (wbx_setting_str(key, val, sizeof val) > 0 && !chimera_dolphin_set_option(key, val))
     {
-      snprintf(g_loadError, sizeof g_loadError, "setting %s: unknown value '%s'", key, val);
+      snprintf(g_loadError, sizeof g_loadError, "error.bad_setting" TEXT_ARG "%s" TEXT_ARG "%s", key, val);
       return 0;
     }
   }
@@ -131,7 +136,7 @@ ECL_EXPORT int Init(void)
   wbx_setting_str("lag_frames", lagFrames, sizeof lagFrames);
   if (!chimera_dolphin_set_lag_frames(lagFrames))
   {
-    snprintf(g_loadError, sizeof g_loadError, "setting lag_frames: unknown value '%s'", lagFrames);
+    snprintf(g_loadError, sizeof g_loadError, "error.bad_lag_frames" TEXT_ARG "%s", lagFrames);
     return 0;
   }
   char cpuCore[32] = "jit";
@@ -153,7 +158,7 @@ ECL_EXPORT int Init(void)
     wbx_setting_str(key, val, sizeof val);
     if (!chimera_dolphin_set_port_device(i, val))
     {
-      snprintf(g_loadError, sizeof g_loadError, "setting %s: unknown value '%s'", key, val);
+      snprintf(g_loadError, sizeof g_loadError, "error.bad_setting" TEXT_ARG "%s" TEXT_ARG "%s", key, val);
       return 0;
     }
   }

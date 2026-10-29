@@ -3,7 +3,7 @@
  "slots": [
   {
    "id": "game",
-   "title": "Game",
+   "title": "slot.game",
    "min": 1,
    "max": 8,
    "formats": [
@@ -14,18 +14,18 @@
     "elf",
     "wad"
    ],
-   "help": "The game. It can be a disc image (.iso or .gcm, or Dolphin's .rvz), a homebrew program (.dol or .elf) that is started directly, or a Wii channel (.wad, as used for WiiWare and Virtual Console games). A .wad makes this a Wii project. It is installed into the console's internal memory before the machine starts and launched from there, as the Wii Menu would do. A game on several discs takes every disc image, in order: the first is in the drive when the console is switched on, and the Next Disc, Previous Disc and Disc Swap controls change it when the game asks."
+   "help": "slot.game.help"
   },
   {
    "id": "savedata",
-   "title": "Save data",
+   "title": "slot.savedata",
    "min": 0,
    "max": 2,
    "formats": [
     "raw",
     "zip"
    ],
-   "help": "The saved data the machine starts with. Put back exactly what Emulator > Export Save Data... wrote, to continue a run from where another one stopped. The file is never changed, and the project and the movie record exactly which file it was. For a GameCube it is the memory card image under the same name (MemoryCardA.USA.raw, or .EUR. or .JAP. according to the game's region). Leave it empty and the machine starts with an empty, formatted card. For a Wii it is the .zip that Export Save Data writes, holding the game's own save files from the console's internal memory (nand/title/.../data/...). They are put into the game's save folder before it starts. A save from a different game is refused."
+   "help": "slot.savedata.help"
   }
  ]
 }
