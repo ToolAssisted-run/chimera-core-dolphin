@@ -271,9 +271,8 @@ is a file a person puts in Chimera's `Cores` folder.
   Tools > Core Manager....
 - **Without building.** Download the package from this repository's Releases
   page, https://github.com/ToolAssisted-run/chimera-core-dolphin/releases, and
-  put it in the same folder. CI publishes a rolling `dev` release on every
-  green push to `main` and a dated `nightly-YYYY-MM-DD` release from the
-  scheduled run, when `main` moved since the last one.
+  put it in the same folder. CI publishes a dated `nightly-YYYY-MM-DD` release
+  from the scheduled run, when `main` moved since the last one.
 
 Tools > Core Manager... lists what is in the folder; Refresh List rescans it.
 
