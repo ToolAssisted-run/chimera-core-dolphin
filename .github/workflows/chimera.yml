@@ -66,11 +66,15 @@ jobs:
         working-directory: chimera-checkout
         run: git submodule update --init extern/chimera-common-minibox
 
-      - name: Which Meson the runner has
+      - name: Which Meson and GCC the runner has
         # a build folder one Meson set up, another cannot read: the runner's
-        # Meson changed on 2026-11-12 and every cached miniBox build failed
+        # Meson changed on 2026-11-12 and every cached miniBox build failed.
+        # A CMake build folder names its GCC's C++ headers by version, so the
+        # dolphin builds are kept per GCC.
         id: meson
-        run: echo "version=$(meson --version)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "version=$(meson --version)" >> "$GITHUB_OUTPUT"
+          echo "gcc=$(gcc -dumpfullversion)" >> "$GITHUB_OUTPUT"
 
       - name: Cache the guest toolchain
         uses: actions/cache@v4
@@ -94,7 +98,7 @@ jobs:
           path: |
             build/native
             build/guest
-          key: dolphin-builds-${{ runner.os }}-${{ hashFiles('.gitmodules', 'patches/**', 'waterbox/configure-flags.sh', 'waterbox/guest-toolchain.cmake') }}
+          key: dolphin-builds-gcc${{ steps.meson.outputs.gcc }}-${{ runner.os }}-${{ hashFiles('.gitmodules', 'patches/**', 'waterbox/configure-flags.sh', 'waterbox/guest-toolchain.cmake') }}
 
       - name: Build the native reference
         run: |
@@ -159,11 +163,15 @@ jobs:
       - name: Build Chimera (the engine, chimera-run and the window)
         run: chimera-checkout/tools/ci-chimera.sh "$HOME/qt"
 
-      - name: Which Meson the runner has
+      - name: Which Meson and GCC the runner has
         # a build folder one Meson set up, another cannot read: the runner's
-        # Meson changed on 2026-11-12 and every cached miniBox build failed
+        # Meson changed on 2026-11-12 and every cached miniBox build failed.
+        # A CMake build folder names its GCC's C++ headers by version, so the
+        # dolphin builds are kept per GCC.
         id: meson
-        run: echo "version=$(meson --version)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "version=$(meson --version)" >> "$GITHUB_OUTPUT"
+          echo "gcc=$(gcc -dumpfullversion)" >> "$GITHUB_OUTPUT"
 
       - name: Cache the guest toolchain
         uses: actions/cache@v4
@@ -185,7 +193,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/guest
-          key: dolphin-builds-${{ runner.os }}-${{ hashFiles('.gitmodules', 'patches/**', 'waterbox/configure-flags.sh', 'waterbox/guest-toolchain.cmake') }}
+          key: dolphin-builds-gcc${{ steps.meson.outputs.gcc }}-${{ runner.os }}-${{ hashFiles('.gitmodules', 'patches/**', 'waterbox/configure-flags.sh', 'waterbox/guest-toolchain.cmake') }}
 
       - name: Build and install the waterbox core package
         # (No native flavor here: the frontend gate's reference is run-wbx,
